@@ -1,0 +1,512 @@
+# Requirements: Bloomberg Terminal open & logged in; Python kernel with blpapi (+ xbbg or pdblp)
+
+import pandas as pd, numpy as np, matplotlib.pyplot as plt, seaborn as sns
+from datetime import datetime, timedelta
+import warnings, time
+
+# Detecting Bloomberg backend (xbbg is preferred, if not I'll fallback to pdblp)
+BACKEND = None
+BDS = BDP = BDH = None
+try:
+    from xbbg import blp as _blp
+    BACKEND = 'xbbg'
+except Exception:
+    try:
+        import pdblp
+        _con = pdblp.BCon(debug=False, port=8194, timeout=10000)
+        _con.start()
+        BACKEND = 'pdblp'
+    except Exception as e:
+        raise RuntimeError("No Bloomberg backend found (xbbg/pdblp). Install and run in a Bloomberg-enabled kernel.") from e
+
+# Request bulk dataset from Bloomberg for a given ticker and field.
+# BDS returns table-like data (e.g., index constituents, corporate actions) 
+# rather than a single value or time series.
+def bds(tkr, field):
+    if BACKEND == 'xbbg':
+        # Use xbbg’s native bulk data request (BDS)
+        return _blp.bds(tkr, field)
+    else:
+        # Use pdblp connection object to run BDS
+        return _con.bds(tkr, field)
+
+# Request a snapshot data point for one or more tickers from Bloomberg.
+# BDP returns the latest available value for the specified field 
+# (e.g., last price, market cap, sector name).
+def bdp(tkrs, field):
+    if BACKEND == 'xbbg':
+        # Use xbbg’s native BDP call
+        return _blp.bdp(tkrs, field)
+    else:
+        # pdblp returns a DataFrame with a 'ticker' column; 
+        # set that column as index so output matches xbbg’s shape.
+        df = _con.bdp(tkrs, field)
+        return df.set_index('ticker')
+
+# Request historical data for one or more tickers from Bloomberg.
+# BDH returns a time series for the specified field over a date range 
+# (e.g., daily close prices, volume).
+def bdh(tkrs, field, start, end, **kwargs):
+    if BACKEND == 'xbbg':
+        # xbbg expects start_date and end_date keyword arguments
+        return _blp.bdh(
+            tkrs,
+            field,
+            start_date=start,
+            end_date=end,
+            **kwargs
+        )
+    else:
+        # pdblp returns a long-form DataFrame (date, ticker, value).
+        # Pivot into a wide format where each ticker is a column 
+        # and each row is a date, making it easier to run vectorised calcs.
+        df = _con.bdh(tkrs, field, start, end, **kwargs)
+        return df.pivot(index='date', columns='ticker', values=field)
+
+def bdib_one(tkr, start_dt, end_dt, interval=1):
+    """
+    Retrieve intraday bar data for a single ticker from Bloomberg.
+
+    Parameters
+    ----------
+    tkr : str
+        Bloomberg ticker (e.g., 'AAPL US Equity').
+    start_dt : datetime
+        Start timestamp for the data request (inclusive).
+    end_dt : datetime
+        End timestamp for the data request (inclusive).
+    interval : int, default 1
+        Bar size in minutes (e.g., 1 = 1-minute bars, 5 = 5-minute bars).
+
+    Returns
+    -------
+    DataFrame
+        Intraday bar data with timestamps as index.
+        Columns typically include 'open', 'high', 'low', 'price', and 'volume'.
+        Returns an empty DataFrame if no data is available or the request fails.
+    """
+
+    # xbbg supports native intraday bar retrieval via bdib()
+    # This directly queries Bloomberg’s Intraday Bar service using the given interval.
+    if BACKEND == 'xbbg':
+        return _blp.bdib(
+            ticker=tkr,
+            dt=start_dt,
+            end_dt=end_dt,
+            interval=interval
+        )
+    else:
+        # pdblp doesn't have bdib() but offers get_intraday_bar() via Bloomberg RefData API.
+        # This retrieves bars of a specified event type (TRADE here) at the given interval.
+        try:
+            df = _con.get_intraday_bar(
+                tkr,
+                start_dt,
+                end_dt,
+                eventType='TRADE',  # Could also be BID/ASK depending on needs
+                interval=interval
+            )
+
+            # Bloomberg returns 'close' as the final column name for the bar's last price.
+            # Rename to 'price' for consistency with xbbg output and set 'time' as the index.
+            df = df.rename(columns={'close': 'price'}).set_index('time')
+            return df
+
+        except Exception:
+            # Fallback: if Bloomberg returns no data or the call fails, 
+            # return an empty DataFrame instead of throwing an error.
+            return pd.DataFrame()
+
+
+# ---------- USER CONFIG (REPLACE with  desk baskets) ----------
+# Use Bloomberg tickers for  strategy baskets (Index/Strategy)
+BASKETS_BB = {
+    'US_Long_MOMO':   'USMOML Index',   # <-- replace
+    'US_Short_MOMO':  'USMOMS Index',   # <-- replace
+    'EMEA_Long_MOMO': 'EMEAMOML Index', # <-- replace
+    'EMEA_Short_MOMO':'EMEAMOMS Index', # <-- replace
+    'APAC_Long_MOMO': 'APACMOML Index', # <-- replace
+    'APAC_Short_MOMO':'APACMOMS Index', # <-- replace
+}
+
+# Standard GICS 11 (row order for heatmaps/plots)
+GICS_SECTORS = [
+    "Communication Services","Consumer Discretionary","Consumer Staples","Energy","Financials",
+    "Health Care","Industrials","Information Technology","Materials","Real Estate","Utilities"
+]
+
+sns.set(font_scale=0.9)
+plt.rcParams['axes.formatter.useoffset'] = False
+warnings.filterwarnings("ignore")
+
+# ---------- HELPERS ----------
+def _members_and_weights(idx_ticker):
+    """
+    Fetch the constituent members and their weights for a given Bloomberg index or strategy.
+
+    This function uses Bloomberg's BDS (Bloomberg Data Set) API call to pull the list of
+    index constituents. It attempts to handle different schema variations that Bloomberg
+    may return depending on index type, asset class, or data license.
+
+    Parameters
+    ----------
+    idx_ticker : str
+        The Bloomberg index ticker, e.g., 'SPX Index', 'SX5E Index', or a strategy ticker.
+
+    Returns
+    -------
+    tuple
+        (tickers, weights) where:
+        - tickers: list of Bloomberg tickers with exchange codes (e.g., 'AAPL US Equity')
+        - weights: list of constituent weights (in % of total index, as floats)
+
+    Raises
+    ------
+    KeyError
+        If no recognizable 'member ticker' column is found in the BDS result.
+    """
+
+    # Query Bloomberg for index membership using the INDX_MEMBERS field.
+    # This returns a table of members and possibly weights.
+    df = bds(idx_ticker, 'INDX_MEMBERS')
+
+    # Standardize all column names to lowercase, snake_case
+    df.columns = [c.lower().strip().replace(' ', '_') for c in df.columns]
+
+    # Bloomberg sometimes labels the ticker column differently depending on data license.
+    # Common variants include:
+    # - 'member_ticker_and_exchange_code'
+    # - 'members'
+    # - 'ticker'
+    # - 'index_member'
+    tcol = None
+    for c in df.columns:
+        if 'member_ticker' in c or c in ('members', 'ticker', 'index_member'):
+            tcol = c
+            break
+
+    # If we didn't find it above, search for any column that simply contains the word 'ticker'.
+    # This handles cases where the field name is non-standard but still includes 'ticker'.
+    if tcol is None:
+        for c in df.columns:
+            if 'ticker' in c:
+                tcol = c
+                break
+
+    # If still nothing, the BDS response structure isn't recognized — raise an error.
+    if tcol is None:
+        raise KeyError(
+            f"Could not locate members column in BDS for {idx_ticker}: {list(df.columns)}"
+        )
+
+    # NOTE: The weight column will be handled later — Bloomberg may name it 'percent_weight',
+    # 'indx_mweight', or similar. We'll normalize that after identifying the ticker column.
+
+    # Identify the column that contains the constituent weights.
+    # Bloomberg may name this 'percent_weight', 'indx_mweight', or some variation.
+    wcol = None
+    for c in df.columns:
+        if 'weight' in c:
+            wcol = c
+            break
+
+    # If no weight column exists, OR if the column exists but is entirely NaN,
+    # we attempt a second BDS request for 'INDX_MWEIGHT' (explicit member weights).
+    if wcol is None or df[wcol].isna().all():
+        try:
+            dfw = bds(idx_ticker, 'INDX_MWEIGHT')
+            dfw.columns = [c.lower().strip().replace(' ', '_') for c in dfw.columns]
+
+            # Identify the ticker column in the weight table.
+            t2 = None
+            for c in dfw.columns:
+                if 'ticker' in c:
+                    t2 = c
+                    break
+
+            # Identify the weight column in the weight table.
+            w2 = None
+            for c in dfw.columns:
+                if 'weight' in c:
+                    w2 = c
+                    break
+
+            # If both ticker and weight columns are found,
+            # merge them into the original membership dataframe.
+            if t2 and w2:
+                df = df.merge(
+                    dfw[[t2, w2]],
+                    left_on=tcol,  # from members table
+                    right_on=t2,   # from weights table
+                    how='left',
+                    suffixes=('', '_w')
+                )
+                wcol = w2  # update active weight column
+        except Exception:
+            # Fails silently if weight data is not available
+            pass
+
+    # Extract tickers from the identified ticker column,
+    # ensuring all are strings and dropping any nulls.
+    tickers = df[tcol].dropna().astype(str).tolist()
+
+    # Remove duplicates while preserving the original Bloomberg order.
+    seen, clean = set(), []
+    for t in tickers:
+        if t not in seen:
+            clean.append(t)
+            seen.add(t)
+
+
+    # Build weights (normalize to 1.0)
+    if wcol and wcol in df.columns and df[wcol].notna().any():
+        w = df[[tcol, wcol]].dropna()
+        w = w.groupby(tcol, as_index=False)[wcol].sum()
+        weights = pd.Series(w[wcol].values, index=w[tcol].values, name='Weight').astype(float)
+        if weights.sum() > 0:
+            weights = weights / weights.sum()
+        else:
+            weights = pd.Series(1.0/len(clean), index=clean, name='Weight')
+    else:
+        weights = pd.Series(1.0/len(clean), index=clean, name='Weight')
+
+    return clean, weights
+
+def _sectors(tickers):
+    """
+    Retrieve the GICS sector name for each ticker.
+    Falls back to 'Unknown' for missing or irregular values.
+    """
+    sec = bdp(tickers, 'GICS_SECTOR_NAME')
+
+    # Detect the actual column name returned (case-sensitive differences possible)
+    col = 'GICS_SECTOR_NAME' if 'GICS_SECTOR_NAME' in sec.columns else 'gics_sector_name'
+    if col not in sec.columns:  # Handle rare schema edge cases
+        col = sec.columns[0]
+
+    out = sec[col].astype(str)
+
+    # Replace string 'nan' or invalid entries with 'Unknown'
+    out = out.where(out.ne('nan'), 'Unknown')
+    return out
+
+
+def _bizdays_ago(n):
+    """
+    Compute a date range from N business days ago until today.
+    Adds a buffer of 5 calendar days to ensure coverage over weekends/holidays.
+    """
+    end = datetime.today().date()
+    start = end - timedelta(days=max(5, n + 5))
+    return start, end
+
+
+def _daily_returns(tickers, lookback_days=5):
+    """
+    Get historical prices and daily percentage returns for the given tickers.
+    Uses a business-day-adjusted lookback window.
+    """
+    start, end = _bizdays_ago(lookback_days)
+
+    # Retrieve closing prices
+    px = bdh(tickers, 'PX_LAST', start, end)
+
+    # Bloomberg may return a MultiIndex (field, ticker); drop the field level
+    if isinstance(px.columns, pd.MultiIndex):
+        px = px.droplevel(0, axis=1)
+
+    # Drop tickers with all-NaN prices in the period
+    px = px.dropna(how='all')
+
+    # Calculate daily returns, ignoring the first NaN row from pct_change
+    ret = px.pct_change().dropna()
+    return px, ret
+
+
+def _weighted_sector(series_returns, sectors, weights):
+    """
+    Aggregate weighted returns by GICS sector.
+    Produces a sector contribution DataFrame aligned to a fixed sector list (GICS_SECTORS).
+    """
+    # Align returns with the weight index; missing entries treated as zero
+    r = series_returns.reindex(weights.index).fillna(0.0)
+
+    # Align weights with the return index; missing entries treated as zero
+    w = weights.reindex(series_returns.index).fillna(0.0)
+
+    # Contribution = return × weight
+    contrib = r * w
+
+    # Map tickers to sectors, filling missing with 'Unknown'
+    sec_map = sectors.reindex(contrib.index).fillna('Unknown')
+
+    # Sum contributions per sector
+    sec = contrib.groupby(sec_map).sum()
+
+    # Reindex to a fixed ordered list of GICS sectors, fill missing with 0.0
+    return sec.reindex(GICS_SECTORS, fill_value=0.0)
+
+def _intraday_prices_matrix(tickers, interval=1):
+    """
+    Build a wide intraday price matrix (time x tickers) using BDIB, best-effort merge on timestamps.
+    """
+    end_dt = datetime.now()
+    start_dt = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    frames = []
+    for t in tickers:
+        bars = bdib_one(t, start_dt, end_dt, interval=interval)
+        if bars is None or bars.empty: 
+            continue
+        # xbbg: columns: ['open','high','low','close','volume'] with index 'time'
+        # pdblp: already renamed to 'price'
+        if 'close' in bars.columns:  # xbbg
+            s = bars['close'].copy()
+        elif 'price' in bars.columns: # pdblp
+            s = bars['price'].copy()
+        else:
+            continue
+        s.name = t
+        frames.append(s)
+        time.sleep(0.01)
+    if not frames:
+        return pd.DataFrame()
+    PX = pd.concat(frames, axis=1).sort_index()
+    # forward-fill occasional missing last bar per name
+    return PX.ffill()
+
+# ---------- 1) SECTOR HEATMAP (Today vs Yesterday) ----------
+def sector_heatmap_today_vs_yday(long_or_short_key_list):
+    """
+    Accepts a list of basket keys (e.g., ['US_Long_MOMO','US_Short_MOMO','EMEA_Long_MOMO']).
+    Builds a GICS-sector heatmap of **weighted** 1-day returns (yday->today) per basket.
+    """
+    sector_table = {}
+    for key in long_or_short_key_list:
+        idx = BASKETS_BB[key]
+        tickers, weights = _members_and_weights(idx)
+        # Daily returns
+        px, ret = _daily_returns(tickers, lookback_days=5)
+        if ret.shape[0] < 1:
+            continue
+        r1d = ret.iloc[-1]
+        # Sectors
+        sectors = _sectors(tickers)
+        # Weighted sector contribution
+        sec = _weighted_sector(r1d, sectors, weights)
+        sector_table[key] = sec
+
+    if not sector_table:
+        print("No sector data available.")
+        return
+
+    heat = pd.DataFrame(sector_table)
+    plt.figure(figsize=(12, 7))
+    sns.heatmap(heat, annot=True, fmt=".2%", cmap="RdYlGn", center=0)
+    plt.title("Sector Contribution to Momentum Basket Returns (Today vs Yesterday)", fontsize=13, fontweight='bold')
+    plt.ylabel("GICS Sector")
+    plt.xlabel("Basket")
+    plt.tight_layout()
+    plt.show()
+    return heat
+
+# ---------- 2) INTRADAY SECTOR TIME-SERIES (vs Open) ----------
+def intraday_sector_lines(basket_key, interval=1, max_sectors=6):
+    """
+    For a single basket, plot sector contributions vs today's open through the session (minute bars by default).
+    """
+    idx = BASKETS_BB[basket_key]
+    tickers, weights = _members_and_weights(idx)
+    PX = _intraday_prices_matrix(tickers, interval=interval)
+    if PX.empty or PX.shape[0] < 3:
+        raise RuntimeError("Intraday data unavailable (market closed or insufficient bars).")
+    # Return vs first bar (open proxy)
+    base = PX.iloc[0]
+    rel = PX.divide(base).subtract(1.0)
+    # Sectors
+    sectors = _sectors(tickers)
+    # Contributions per name
+    W = weights.reindex(rel.columns).fillna(0.0)
+    contrib = rel.multiply(W.values, axis=1)
+    # Group by sector per timestamp
+    sec_map = sectors.reindex(contrib.columns).fillna("Unknown")
+    contrib.columns = pd.MultiIndex.from_arrays([sec_map.values, contrib.columns], names=['Sector','Ticker'])
+    by_sector = contrib.groupby(level='Sector', axis=1).sum()
+    by_sector = by_sector.reindex(columns=GICS_SECTORS).fillna(0.0)
+    basket_line = by_sector.sum(axis=1)
+
+    # Choose top sectors by weight share for cleaner plot
+    sector_weight_share = W.groupby(sec_map).sum().reindex(GICS_SECTORS, fill_value=0.0)
+    top = sector_weight_share.sort_values(ascending=False).head(max_sectors).index.tolist()
+    to_plot = [s for s in GICS_SECTORS if s in top]
+
+    plt.figure(figsize=(11,6))
+    for s in to_plot:
+        plt.plot(by_sector.index, by_sector[s], label=s, linewidth=1.6)
+    plt.plot(basket_line.index, basket_line.values, label=f"{basket_key} (Total)", linewidth=2.4, linestyle='--')
+    plt.axhline(0, color='gray', linewidth=1)
+    plt.title(f"{basket_key} — Intraday Sector Contribution (vs Open) • {interval}m bars")
+    plt.xlabel("Time")
+    plt.ylabel("Return vs Open")
+    plt.legend(ncol=2, fontsize=9)
+    plt.tight_layout()
+    plt.show()
+
+    # Intraday sector heatmap 
+    slim = by_sector.iloc[::5].T  # every 5th bar
+    plt.figure(figsize=(12,6))
+    sns.heatmap(slim, cmap='RdYlGn', center=0)
+    plt.title(f"{basket_key} — Intraday Sector Heatmap (every 5 bars)")
+    plt.xlabel("Time"); plt.ylabel("Sector")
+    plt.tight_layout(); plt.show()
+
+    return by_sector, basket_line
+
+# ---------- 3) LONG vs SHORT (weighted) + Spread ----------
+def long_short_compare(region_prefix='US'):
+    """
+    Compares Long vs Short baskets for a region (e.g., 'US','EMEA','APAC') using weighted daily returns.
+    Plots cumulative performance & long-short spread.
+    """
+    long_key  = f"{region_prefix}_Long_MOMO"
+    short_key = f"{region_prefix}_Short_MOMO"
+    if long_key not in BASKETS_BB or short_key not in BASKETS_BB:
+        raise KeyError(f"Missing keys for region {region_prefix}. Have: {list(BASKETS_BB.keys())}")
+
+    # Long leg
+    tL, wL = _members_and_weights(BASKETS_BB[long_key])
+    pxL, rL = _daily_returns(tL, lookback_days=30)
+    wL = wL.reindex(pxL.columns).fillna(0.0)
+    retL = (rL * wL).sum(axis=1)
+
+    # Short leg
+    tS, wS = _members_and_weights(BASKETS_BB[short_key])
+    pxS, rS = _daily_returns(tS, lookback_days=30)
+    wS = wS.reindex(pxS.columns).fillna(0.0)
+    retS = (rS * wS).sum(axis=1)
+
+    # Align
+    idx = retL.index.intersection(retS.index)
+    retL, retS = retL.reindex(idx), retS.reindex(idx)
+
+    long_cum  = (1 + retL).cumprod()
+    short_cum = (1 + retS).cumprod()
+    spread    = long_cum - short_cum
+
+    plt.figure(figsize=(10,5))
+    plt.plot(long_cum,  label=f"{long_key} (Long)")
+    plt.plot(short_cum, label=f"{short_key} (Short)")
+    plt.plot(spread,    label="Long - Short Spread", linestyle="--")
+    plt.title(f"Long vs Short MOMO — {region_prefix}")
+    plt.legend(); plt.grid(True); plt.tight_layout(); plt.show()
+
+    return pd.DataFrame({'Long':long_cum, 'Short':short_cum, 'Spread':spread})
+
+# ================== RUN EXAMPLES ==================
+# 1) Sector heatmap (Today vs Yesterday) for these baskets:
+heat = sector_heatmap_today_vs_yday(['US_Long_MOMO','US_Short_MOMO','EMEA_Long_MOMO','EMEA_Short_MOMO','APAC_Long_MOMO','APAC_Short_MOMO'])
+
+# 2) Intraday sector lines for a single basket (minute bars)
+# by_sector_ts, basket_ts = intraday_sector_lines('US_Long_MOMO', interval=1, max_sectors=6)
+
+# 3) Long vs Short cumulative & spread for a region
+# ls_df = long_short_compare('US')
