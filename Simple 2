@@ -1,0 +1,32 @@
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from xbbg import blp  # assumes you can use xbbg
+
+def sector_factor_returns(basket, start, end):
+    # 1. Get members
+    members = blp.bds(basket, "INDX_MEMBERS")
+    tickers = members["Member Ticker and Exchange Code"].tolist()
+
+    # 2. Get sectors
+    sectors = blp.bdp(tickers, "GICS_SECTOR_NAME")
+
+    # 3. Get prices
+    px = blp.bdh(tickers, "PX_LAST", start, end)
+    rets = px.pct_change().dropna()
+
+    # 4. Map tickers to sectors
+    rets = rets.stack().reset_index()
+    rets.columns = ["date", "ticker", "ret"]
+    rets = rets.merge(sectors, left_on="ticker", right_index=True)
+
+    # 5. Average by sector each day
+    sector_rets = rets.groupby(["date", "GICS_SECTOR_NAME"])["ret"].mean().unstack()
+    return sector_rets
+
+# -------- run test --------
+if __name__ == "__main__":
+    start = (datetime.today() - timedelta(days=30)).strftime("%Y-%m-%d")
+    end   = datetime.today().strftime("%Y-%m-%d")
+    df = sector_factor_returns("USMOML Index", start, end)
+    print(df.tail())
