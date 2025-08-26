@@ -1,0 +1,86 @@
+import pandas as pd, numpy as np
+
+# ---------- Bloomberg backend ----------
+BACKEND = None
+try:
+    from xbbg import blp as _blp
+    BACKEND = "xbbg"
+except Exception:
+    try:
+        import pdblp
+        _con = pdblp.BCon(debug=False, port=8194, timeout=10000)
+        _con.start()
+        BACKEND = "pdblp"
+    except Exception as e:
+        raise RuntimeError("No Bloomberg backend found") from e
+
+
+# ---------- Bloomberg wrappers ----------
+def bds(tkr, field):
+    if BACKEND == "xbbg":
+        return _blp.bds(tkr, field)
+    else:
+        return _con.bds(tkr, field)
+
+def bdp(tkrs, field):
+    if BACKEND == "xbbg":
+        return _blp.bdp(tkrs, field)
+    else:
+        df = _con.bdp(tkrs, field)
+        return df.set_index("ticker")
+
+def bdh(tkrs, field, start, end, **kwargs):
+    if BACKEND == "xbbg":
+        return _blp.bdh(tkrs, field, start_date=start, end_date=end, **kwargs)
+    else:
+        df = _con.bdh(tkrs, field, start, end, **kwargs)
+        return df.pivot(index="date", columns="ticker", values=field)
+
+def bdib_one(tkr, start_dt, end_dt, interval=1):
+    if BACKEND == "xbbg":
+        return _blp.bdib(ticker=tkr, dt=start_dt, end_dt=end_dt, interval=interval)
+    else:
+        try:
+            df = _con.get_intraday_bar(
+                tkr, start_dt, end_dt, eventType="TRADE", interval=interval
+            )
+            df = df.rename(columns={"close": "price"}).set_index("time")
+            return df
+        except Exception:
+            return pd.DataFrame()
+
+
+# ---------- Members + Weights ----------
+def _members_and_weights(idx_ticker):
+    df = bds(idx_ticker, "INDX_MEMBERS")
+    df.columns = [c.lower().replace(" ", "_") for c in df.columns]
+
+    # find ticker column
+    for c in df.columns:
+        if "ticker" in c:
+            tcol = c
+            break
+    else:
+        raise KeyError("No ticker column found")
+
+    # find weight column
+    wcol = None
+    for c in df.columns:
+        if "weight" in c:
+            wcol = c
+            break
+
+    tickers = df[tcol].tolist()
+    weights = df[wcol].astype(float).tolist() if wcol else [None] * len(tickers)
+    return tickers, weights
+
+
+# ---------- Run a test ----------
+if __name__ == "__main__":
+    print("Testing Bloomberg connection...")
+    try:
+        tickers, weights = _members_and_weights("SPX Index")
+        print("First 5 tickers:", tickers[:5])
+        print("First 5 weights:", weights[:5])
+    except Exception as e:
+        print("Error:", e)
