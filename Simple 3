@@ -1,0 +1,126 @@
+# ======================================================
+# EQUITIES + STATISTICAL ANALYSIS TOOLKIT (Bloomberg + pandas)
+# ======================================================
+
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from xbbg import blp
+import statsmodels.api as sm
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# ---------------------------------
+# 1. Download Bloomberg Data
+# ---------------------------------
+tickers = ['AAPL US Equity', 'MSFT US Equity', 'AMZN US Equity', 'SPX Index']
+start = '2024-01-01'
+end   = '2024-08-01'
+
+# Historical prices
+px = blp.bdh(tickers, 'PX_LAST', start, end)
+
+# Snapshot info
+info = blp.bdp(tickers, ['CUR_MKT_CAP','GICS_SECTOR_NAME'])
+
+# Index members example
+spx_members = blp.bds('SPX Index', 'INDX_MEMBERS')
+
+# ---------------------------------
+# 2. Clean Data
+# ---------------------------------
+px = px.ffill().dropna()             # forward fill and drop missing
+px.columns = px.columns.droplevel(0) # flatten columns if multiindex
+
+# ---------------------------------
+# 3. Returns & Performance
+# ---------------------------------
+rets = px.pct_change().dropna()
+cum_rets = (1+rets).cumprod()
+log_rets = np.log(px/px.shift(1))
+
+ann_ret = rets.mean()*252
+ann_vol = rets.std()*np.sqrt(252)
+sharpe = ann_ret/ann_vol
+
+print("Annualized Returns:\n", ann_ret)
+print("Annualized Vol:\n", ann_vol)
+print("Sharpe Ratios:\n", sharpe)
+
+# ---------------------------------
+# 4. Grouping by Sector
+# ---------------------------------
+# sector map from bdp
+sectors = blp.bdp(tickers, 'GICS_SECTOR_NAME')
+
+rets_long = rets.stack().reset_index()
+rets_long.columns = ['date','ticker','ret']
+rets_long = rets_long.merge(sectors, left_on='ticker', right_index=True)
+
+sector_rets = rets_long.groupby(['date','GICS_SECTOR_NAME'])['ret'].mean().unstack()
+
+print("Sector Returns sample:\n", sector_rets.head())
+
+# ---------------------------------
+# 5. Risk & Correlations
+# ---------------------------------
+cov = rets.cov()
+corr = rets.corr()
+
+rolling_vol = rets['AAPL US Equity'].rolling(60).std()*np.sqrt(252)
+rolling_corr = rets['AAPL US Equity'].rolling(60).corr(rets['MSFT US Equity'])
+
+# ---------------------------------
+# 6. Portfolio Analytics
+# ---------------------------------
+weights = np.array([0.4,0.3,0.3,0.0])  # weights for AAPL, MSFT, AMZN, SPX
+port_ret = rets.dot(weights)
+port_cum = (1+port_ret).cumprod()
+port_vol = np.sqrt(weights.T @ cov.values @ weights)
+
+print("Portfolio Vol:", port_vol)
+
+# ---------------------------------
+# 7. CAPM Regression Example
+# ---------------------------------
+Y = rets['AAPL US Equity']
+X = rets['SPX Index']
+X = sm.add_constant(X)
+model = sm.OLS(Y, X).fit()
+print(model.summary())
+
+# Rolling beta
+window = 60
+rolling_beta = Y.rolling(window).cov(rets['SPX Index']) / rets['SPX Index'].rolling(window).var()
+
+# ---------------------------------
+# 8. Visualization
+# ---------------------------------
+plt.figure(figsize=(10,6))
+px['AAPL US Equity'].plot(title="AAPL Price")
+plt.show()
+
+plt.figure(figsize=(10,6))
+cum_rets.plot(title="Cumulative Returns")
+plt.show()
+
+plt.figure(figsize=(10,6))
+sns.heatmap(corr, annot=True, cmap='coolwarm')
+plt.title("Correlation Matrix")
+plt.show()
+
+plt.figure(figsize=(10,6))
+sector_rets.cumsum().plot(title="Sector Cumulative Returns")
+plt.show()
+
+plt.figure(figsize=(10,6))
+rolling_vol.plot(title="AAPL 60-day Rolling Volatility")
+plt.show()
+
+plt.figure(figsize=(10,6))
+rolling_beta.plot(title="AAPL Rolling Beta vs SPX")
+plt.show()
+
+plt.figure(figsize=(10,6))
+port_cum.plot(title="Portfolio Cumulative Return")
+plt.show()
