@@ -1,0 +1,85 @@
+import bql
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# ----------------------------------------
+# CONNECT TO BQL
+# ----------------------------------------
+bq = bql.Service()
+
+# ----------------------------------------
+# CONFIG
+# ----------------------------------------
+basket = "YOUR_BASKET_NAME Index"   # e.g. "USMOML Index"
+start = "2024-01-01"
+end   = "2024-08-01"
+
+# ----------------------------------------
+# 1. Get basket members
+# ----------------------------------------
+req = bql.Request(basket, {"members": bq.data.memberships()})
+members = bq.execute(req).as_df()
+tickers = members["members"].tolist()
+
+# ----------------------------------------
+# 2. Get sector classification
+# ----------------------------------------
+req = bql.Request(tickers, {"sector": bq.data.gicsSectorName()})
+sectors = bq.execute(req).as_df()
+
+# ----------------------------------------
+# 3. Get daily prices
+# ----------------------------------------
+flds = {"px": bq.data.px_last(dates=bq.func.range(start, end, "daily"))}
+req = bql.Request(tickers, flds)
+prices = bq.execute(req).as_df()
+px = prices.pivot(index="date", columns="ticker", values="px")
+
+# ----------------------------------------
+# 4. Compute returns
+# ----------------------------------------
+rets = px.pct_change().dropna()
+
+# ----------------------------------------
+# 5. Combine returns + sectors
+# ----------------------------------------
+rets_long = rets.stack().reset_index()
+rets_long.columns = ["date", "ticker", "ret"]
+rets_long = rets_long.merge(sectors, on="ticker")
+
+# ----------------------------------------
+# 6. Sector-level returns
+# ----------------------------------------
+sector_rets = rets_long.groupby(["date", "sector"])["ret"].mean().unstack()
+
+# ----------------------------------------
+# 7. Compute cumulative returns per sector
+# ----------------------------------------
+sector_cumrets = (1 + sector_rets).cumprod() - 1
+
+# ----------------------------------------
+# 8. Heatmap of sector returns (last 20 days)
+# ----------------------------------------
+last_20 = sector_rets.tail(20) * 100  # % returns
+
+plt.figure(figsize=(12, 6))
+sns.heatmap(last_20.T, cmap="RdYlGn", center=0, annot=False, cbar_kws={'label': '% daily return'})
+plt.title(f"Sector Daily Returns Heatmap – {basket}", fontsize=14)
+plt.xlabel("Date")
+plt.ylabel("Sector")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# ----------------------------------------
+# 9. Line chart for cumulative sector returns
+# ----------------------------------------
+sector_cumrets.plot(figsize=(12,6))
+plt.title(f"Cumulative Sector Returns – {basket}", fontsize=14)
+plt.ylabel("Cumulative Return")
+plt.xlabel("Date")
+plt.legend(title="Sector")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
