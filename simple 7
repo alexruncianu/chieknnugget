@@ -1,0 +1,54 @@
+import bql
+import pandas as pd
+
+# ----------------------------------------
+# Connect to BQL
+# ----------------------------------------
+bq = bql.Service()
+
+# ----------------------------------------
+# Bloomberg-like function wrappers (BQuant style)
+# ----------------------------------------
+
+# --- BDS: Bulk dataset (e.g., index members)
+def bds(tkr, field):
+    if field == "INDX_MEMBERS":
+        req = bql.Request(tkr, {"members": bq.data.memberships()})
+        df = bq.execute(req).as_df()
+        return df
+    else:
+        raise NotImplementedError(f"BDS field {field} not yet implemented in this wrapper")
+
+# --- BDP: Snapshot data
+def bdp(tkrs, field):
+    if isinstance(tkrs, str):
+        tkrs = [tkrs]
+    req = bql.Request(tkrs, {field: getattr(bq.data, field)()})
+    df = bq.execute(req).as_df()
+    return df.pivot(index="ticker", values=field)
+
+# --- BDH: Historical time series
+def bdh(tkrs, field, start, end):
+    if isinstance(tkrs, str):
+        tkrs = [tkrs]
+    fld = getattr(bq.data, field)(dates=bq.func.range(start, end, "daily"))
+    req = bql.Request(tkrs, {field: fld})
+    df = bq.execute(req).as_df()
+    return df.pivot(index="date", columns="ticker", values=field)
+
+# ----------------------------------------
+# Example usage
+# ----------------------------------------
+
+# 1. Get index members
+basket = "SPX Index"   # replace with your custom basket
+members = bds(basket, "INDX_MEMBERS")
+print("Members:\n", members.head())
+
+# 2. Get snapshot (e.g., last price)
+px_last = bdp(["AAPL US Equity", "MSFT US Equity"], "px_last")
+print("\nSnapshot prices:\n", px_last)
+
+# 3. Get historical (e.g., daily closes)
+hist = bdh(["AAPL US Equity", "MSFT US Equity"], "px_last", "2024-01-01", "2024-02-01")
+print("\nHistorical prices:\n", hist.head())
