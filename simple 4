@@ -1,0 +1,81 @@
+# =========================================
+# Sector Factor Risk Breakdown for Custom Basket (BQuant / BQL)
+# =========================================
+
+import bql
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+
+# Connect BQL (works inside BQuant directly)
+bq = bql.Service()
+
+# --------------------------
+# 1. Define basket & dates
+# --------------------------
+basket = "YOUR_BASKET_NAME Index"   # <-- replace with your basket ticker
+start_date = "2024-01-01"
+end_date   = "2024-08-01"
+
+# --------------------------
+# 2. Get constituents
+# --------------------------
+req_members = bql.Request(basket, {"members": bq.data.memberships()})
+members = bq.execute(req_members).as_df()
+tickers = members['members'].tolist()
+
+print("Constituents:", tickers[:10])
+
+# --------------------------
+# 3. Get sector info
+# --------------------------
+req_sectors = bql.Request(tickers, {"sector": bq.data.gicsSectorName()})
+sectors = bq.execute(req_sectors).as_df()
+
+# --------------------------
+# 4. Get daily prices
+# --------------------------
+flds = {
+    "px": bq.data.px_last(dates=bq.func.range(start_date, end_date, "daily"))
+}
+req_prices = bql.Request(tickers, flds)
+prices = bq.execute(req_prices).as_df()
+
+# Pivot into wide DataFrame
+px = prices.pivot(index="date", columns="ticker", values="px")
+
+# --------------------------
+# 5. Compute returns
+# --------------------------
+rets = px.pct_change().dropna()
+
+# Melt returns into long format
+rets_long = rets.stack().reset_index()
+rets_long.columns = ["date","ticker","ret"]
+
+# Merge sector info
+rets_long = rets_long.merge(sectors, on="ticker")
+
+# --------------------------
+# 6. Sector factor returns
+# --------------------------
+sector_rets = (
+    rets_long.groupby(["date","sector"])["ret"].mean().unstack()
+)
+
+print("Sector Factor Returns:\n", sector_rets.head())
+
+# --------------------------
+# 7. Example: cumulative sector returns
+# --------------------------
+cum_sector_rets = (1+sector_rets).cumprod()
+
+# --------------------------
+# 8. Plot results
+# --------------------------
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(12,6))
+cum_sector_rets.plot(title="Custom Basket - Sector Factor Cumulative Returns")
+plt.ylabel("Growth of $1")
+plt.show()
