@@ -1,0 +1,36 @@
+import bql
+import pandas as pd
+
+# Connect to Bloomberg BQL
+bq = bql.Service()
+
+# ---- CONFIG ----
+basket = "YOUR_BASKET_NAME Index"   # replace with your basket
+start = "2024-01-01"
+end   = "2024-08-01"
+
+# ---- 1. Basket members ----
+req = bql.Request(basket, {"members": bq.data.memberships()})
+members = bq.execute(req).as_df()
+tickers = members['members'].tolist()
+
+# ---- 2. Sector info ----
+req = bql.Request(tickers, {"sector": bq.data.gicsSectorName()})
+sectors = bq.execute(req).as_df()
+
+# ---- 3. Prices ----
+flds = {"px": bq.data.px_last(dates=bq.func.range(start, end, "daily"))}
+req = bql.Request(tickers, flds)
+prices = bq.execute(req).as_df()
+px = prices.pivot(index="date", columns="ticker", values="px")
+
+# ---- 4. Returns ----
+rets = px.pct_change().dropna()
+
+# ---- 5. Sector average returns ----
+rets_long = rets.stack().reset_index()
+rets_long.columns = ["date","ticker","ret"]
+rets_long = rets_long.merge(sectors, on="ticker")
+sector_rets = rets_long.groupby(["date","sector"])["ret"].mean().unstack()
+
+print(sector_rets.head())
