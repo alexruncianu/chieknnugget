@@ -1,0 +1,94 @@
+import pandas as pd
+
+# --------------------------
+# Example inputs
+# --------------------------
+# df1 = DataFrame of returns (date, ticker, ret)
+# df2 = DataFrame of sector + weights (ticker, sector, weight)
+
+# Example:
+# df1:
+#   date        ticker      ret
+#   2025-01-02  AAPL US     0.01
+#   2025-01-02  MSFT US     0.005
+#
+# df2:
+#   ticker      sector                  weight
+#   AAPL US     Information Technology  0.06
+#   MSFT US     Information Technology  0.04
+
+# --------------------------
+# Merge sector & weights into returns
+# --------------------------
+df = df1.merge(df2, on="ticker")
+
+# --------------------------
+# Sector factor returns
+# --------------------------
+
+# Equal-weighted (average of returns per sector)
+sector_rets_eq = df.groupby(["date","sector"])["ret"].mean().unstack()
+
+# Weighted (using provided basket weights)
+sector_rets_w = df.groupby(["date","sector"]).apply(
+    lambda x: (x["ret"] * x["weight"]).sum() / x["weight"].sum()
+).unstack()
+
+# --------------------------
+# Sector cumulative returns
+# --------------------------
+sector_cumrets_eq = (1 + sector_rets_eq).cumprod() - 1
+sector_cumrets_w  = (1 + sector_rets_w).cumprod() - 1
+
+# --------------------------
+# Sector Weights
+# --------------------------
+sector_weights = df2.groupby("sector")["weight"].sum()
+sector_weights = sector_weights / sector_weights.sum()   # normalize to 1
+
+# --------------------------
+# Stock Weights within each Sector
+# --------------------------
+stock_within_sector_weights = df2.groupby("sector").apply(
+    lambda x: x.assign(
+        weight_in_sector = x["weight"] / x["weight"].sum()
+    )
+).reset_index(drop=True)
+
+# --------------------------
+# Print outputs
+# --------------------------
+print("Equal-weighted sector returns:")
+print(sector_rets_eq.head())
+
+print("\nWeighted sector returns:")
+print(sector_rets_w.head())
+
+print("\nSector weights in basket:")
+print(sector_weights)
+
+print("\nStock weights within each sector:")
+print(stock_within_sector_weights.head())
+
+import matplotlib.pyplot as plt
+
+# --------------------------
+# Heatmap of weighted sector returns
+# --------------------------
+
+plt.figure(figsize=(12,6))
+plt.imshow(sector_rets_w.T, aspect="auto", cmap="RdYlGn", 
+           interpolation="nearest", origin="lower")
+
+# Set axis labels
+plt.yticks(range(len(sector_rets_w.columns)), sector_rets_w.columns)
+plt.xticks(range(0, len(sector_rets_w.index), max(1, len(sector_rets_w)//10)), 
+           sector_rets_w.index.strftime("%Y-%m-%d"), rotation=45, ha="right")
+
+plt.colorbar(label="Daily Return")
+plt.title("Sector Factor Returns Heatmap (Weighted)")
+
+# Save to file
+plt.tight_layout()
+plt.savefig("sector_returns_heatmap.png", dpi=300)
+plt.show()
