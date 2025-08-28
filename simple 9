@@ -1,0 +1,231 @@
+import pandas as pd
+
+# ---- Example: Assume df_returns, df_sectors, df_weights are already defined ----
+# df_returns = DataFrame([ID, Date, Return])
+# df_sectors = DataFrame([ID, Sector])
+# df_weights = DataFrame([ID, Weight])
+
+# 1. Merge all data together
+df = df_returns.merge(df_sectors, on="ID", how="left")
+df = df.merge(df_weights, on="ID", how="left")
+
+# 2. Calculate weighted return per stock
+df["WeightedReturn"] = df["Return"] * df["Weight"]
+
+# 3. Sector-level returns per date
+sector_returns = (
+    df.groupby(["Date","Sector"])
+      .agg({"WeightedReturn":"sum", "Weight":"sum"})
+      .reset_index()
+)
+
+# 4. Sector return contribution = weighted return / total basket weight
+# (Normalizes so we can attribute performance to each sector)
+total_weights = sector_returns.groupby("Date")["Weight"].transform("sum")
+sector_returns["SectorContribution"] = sector_returns["WeightedReturn"] / total_weights
+
+# 5. Basket return per date = sum of sector contributions
+basket_returns = (
+    sector_returns.groupby("Date")["SectorContribution"]
+    .sum()
+    .reset_index(name="BasketReturn")
+)
+
+# ---- Outputs ----
+# sector_returns → sector weights + contributions per date
+# basket_returns → overall basket return per date
+
+print(sector_returns.head())
+print(basket_returns.head())
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ---- Assume you already have these DataFrames ----
+# df_returns = DataFrame([ID, Date, Return])
+# df_sectors = DataFrame([ID, Sector])
+# df_weights = DataFrame([ID, Weight])
+
+# 1. Merge all data together
+df = df_returns.merge(df_sectors, on="ID", how="left")
+df = df.merge(df_weights, on="ID", how="left")
+
+# 2. Calculate weighted return per stock
+df["WeightedReturn"] = df["Return"] * df["Weight"]
+
+# 3. Sector-level returns per date
+sector_returns = (
+    df.groupby(["Date","Sector"])
+      .agg({"WeightedReturn":"sum", "Weight":"sum"})
+      .reset_index()
+)
+
+# 4. Sector return contribution = weighted return / total basket weight
+total_weights = sector_returns.groupby("Date")["Weight"].transform("sum")
+sector_returns["SectorContribution"] = sector_returns["WeightedReturn"] / total_weights
+
+# 5. Basket return per date = sum of sector contributions
+basket_returns = (
+    sector_returns.groupby("Date")["SectorContribution"]
+    .sum()
+    .reset_index(name="BasketReturn")
+)
+
+# ---- PIVOT for heatmap ----
+heatmap_data = sector_returns.pivot(index="Date", columns="Sector", values="SectorContribution")
+
+# ---- Plot Heatmap ----
+plt.figure(figsize=(12,6))
+plt.imshow(heatmap_data.T, aspect="auto", cmap="RdYlGn", 
+           interpolation="nearest", origin="lower")
+
+plt.yticks(range(len(heatmap_data.columns)), heatmap_data.columns)
+plt.xticks(range(0, len(heatmap_data.index), max(1, len(heatmap_data)//10)), 
+           heatmap_data.index.strftime("%Y-%m-%d"), rotation=45, ha="right")
+
+plt.colorbar(label="Sector Return Contribution")
+plt.title("Sector Contributions to Basket Returns")
+plt.tight_layout()
+plt.show()
+
+# ---- Plot Basket Returns Line Chart ----
+plt.figure(figsize=(12,6))
+plt.plot(basket_returns["Date"], basket_returns["BasketReturn"], label="Basket Return", linewidth=2)
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.title("Historical Basket Returns")
+plt.xlabel("Date")
+plt.ylabel("Return")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+----
+
+import bql
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ----------------------------------------------------
+# 1. Connect to BQL
+# ----------------------------------------------------
+bq = bql.Service()
+
+# ----------------------------------------------------
+# 2. Define your baskets
+# ----------------------------------------------------
+long_basket = "YOUR_LONG_BASKET"    # e.g. "BASKET_LONG"
+short_basket = "YOUR_SHORT_BASKET"  # e.g. "BASKET_SHORT"
+
+start_date = "2024-01-01"
+end_date   = "2024-12-31"
+
+# ----------------------------------------------------
+# 3. Helper: Get basket members, weights, returns, sectors
+# ----------------------------------------------------
+def get_basket_data(basket_id, start_date, end_date):
+    # Constituents & Weights
+    req_members = bql.Request(
+        basket_id,
+        {"id": bq.basket.constituents().id,
+         "weight": bq.basket.constituents().weight}
+    )
+    df_members = bq.execute(req_members).as_dataframe().reset_index()
+    df_members = df_members.rename(columns={"basket.constituents.id":"ID",
+                                            "basket.constituents.weight":"Weight"})
+    
+    # Sector info
+    req_sectors = bql.Request(
+        df_members["ID"].tolist(),
+        {"sector": bq.eq_fundamentals.industryGroup()}
+    )
+    df_sectors = bq.execute(req_sectors).as_dataframe().reset_index()
+    df_sectors = df_sectors.rename(columns={"eq_fundamentals.industryGroup":"Sector"})
+    
+    # Returns
+    req_returns = bql.Request(
+        df_members["ID"].tolist(),
+        {"Return": bq.pricing.dailyPctChange().dates(start_date, end_date)}
+    )
+    df_returns = bq.execute(req_returns).as_dataframe().reset_index()
+    df_returns = df_returns.rename(columns={"pricing.dailyPctChange":"Return"})
+    
+    return df_returns, df_sectors, df_members[["ID","Weight"]]
+
+
+# ----------------------------------------------------
+# 4. Attribution Function
+# ----------------------------------------------------
+def compute_basket_attribution(df_returns, df_sectors, df_weights):
+    df = df_returns.merge(df_sectors, on="ID", how="left")
+    df = df.merge(df_weights, on="ID", how="left")
+    df["WeightedReturn"] = df["Return"] * df["Weight"]
+
+    sector_returns = (
+        df.groupby(["Date","Sector"])
+          .agg({"WeightedReturn":"sum", "Weight":"sum"})
+          .reset_index()
+    )
+    total_weights = sector_returns.groupby("Date")["Weight"].transform("sum")
+    sector_returns["SectorContribution"] = sector_returns["WeightedReturn"] / total_weights
+
+    basket_returns = (
+        sector_returns.groupby("Date")["SectorContribution"]
+        .sum()
+        .reset_index(name="BasketReturn")
+    )
+    return sector_returns, basket_returns
+
+
+# ----------------------------------------------------
+# 5. Get data for Long and Short baskets
+# ----------------------------------------------------
+df_returns_long, df_sectors_long, df_weights_long = get_basket_data(long_basket, start_date, end_date)
+df_returns_short, df_sectors_short, df_weights_short = get_basket_data(short_basket, start_date, end_date)
+
+# ----------------------------------------------------
+# 6. Compute Attribution
+# ----------------------------------------------------
+sector_long, basket_long = compute_basket_attribution(df_returns_long, df_sectors_long, df_weights_long)
+sector_short, basket_short = compute_basket_attribution(df_returns_short, df_sectors_short, df_weights_short)
+
+# ----------------------------------------------------
+# 7. Combine Long, Short, Long-Short
+# ----------------------------------------------------
+basket_all = basket_long.merge(basket_short, on="Date", suffixes=("_Long","_Short"))
+basket_all["BasketReturn_LS"] = basket_all["BasketReturn_Long"] - basket_all["BasketReturn_Short"]
+
+sector_all = sector_long.merge(sector_short, on=["Date","Sector"], suffixes=("_Long","_Short"))
+sector_all["SectorContribution_LS"] = sector_all["SectorContribution_Long"] - sector_all["SectorContribution_Short"]
+
+# ----------------------------------------------------
+# 8. Visualisations
+# ----------------------------------------------------
+
+# Line Chart
+plt.figure(figsize=(12,6))
+plt.plot(basket_all["Date"], basket_all["BasketReturn_Long"], label="Long Basket")
+plt.plot(basket_all["Date"], basket_all["BasketReturn_Short"], label="Short Basket")
+plt.plot(basket_all["Date"], basket_all["BasketReturn_LS"], label="Long-Short")
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.title("Basket Returns: Long, Short, Long-Short")
+plt.xlabel("Date")
+plt.ylabel("Return")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# Heatmap (Long-Short sector attribution)
+heatmap_data = sector_all.pivot(index="Date", columns="Sector", values="SectorContribution_LS")
+
+plt.figure(figsize=(12,6))
+plt.imshow(heatmap_data.T, aspect="auto", cmap="RdYlGn", origin="lower")
+plt.yticks(range(len(heatmap_data.columns)), heatmap_data.columns)
+plt.xticks(range(0, len(heatmap_data.index), max(1, len(heatmap_data)//10)),
+           heatmap_data.index.strftime("%Y-%m-%d"), rotation=45, ha="right")
+plt.colorbar(label="Sector LS Contribution")
+plt.title("Sector Attribution (Long-Short)")
+plt.tight_layout()
+plt.show()
+
