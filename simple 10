@@ -1,0 +1,197 @@
+import bql
+import pandas as pd
+import numpy as np
+
+bq = bql.Service()
+
+# Example basket (replace with your basket ticker)
+basket = "MY_BASKET Index"
+
+# 1. Pull 1y of daily prices
+req = bql.Request(
+    basket,
+    {
+        "px": bq.data.px_last(dates=bq.func.range("-1Y", None), freq="D")
+    }
+)
+
+res = bq.execute(req)
+df = res[0].df()
+
+# 2. Calculate daily returns
+df["return"] = df["px"].pct_change()
+
+# 3. Standard deviation of returns (volatility)
+vol = df["return"].std()
+
+print(f"1Y Basket Return Std Dev: {vol:.2%}")
+
+----
+
+import bql
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+import ipywidgets as widgets
+
+# --------------------------
+# 1. BQL Setup
+# --------------------------
+bq = bql.Service()
+
+# Define baskets (replace with your Bloomberg baskets or indices)
+baskets = {
+    "Long Momentum": "LONG_MOMO Index",
+    "Short Momentum": "SHORT_MOMO Index",
+    "Long-Short Momentum": "LONGSHORT_MOMO Index"
+}
+
+# --------------------------
+# 2. Helper Functions
+# --------------------------
+
+def get_sector_breakdown(basket, name):
+    """Fetch sector weights for a basket."""
+    req = bql.Request(
+        basket,
+        {
+            "sector": bq.data.gics_sector(),
+            "weight": bq.data.weight()
+        }
+    )
+    df = bq.execute(req)[0].df()
+    df["Basket"] = name
+    return df
+
+def get_basket_returns(basket, name):
+    """Fetch daily price history & compute returns."""
+    req = bql.Request(
+        basket,
+        {"px": bq.data.px_last(dates=bq.func.range("-1Y", None), freq="D")}
+    )
+    res = bq.execute(req)
+    df = res[0].df().rename(columns={"px": "price"})
+    df["return"] = df["price"].pct_change()
+    df["Basket"] = name
+    return df.dropna()
+
+def compute_risk_stats(df):
+    """Compute volatility, Sharpe ratio, drawdown."""
+    stats = {}
+    rets = df["return"].dropna()
+    if len(rets) == 0:
+        return {"Volatility": np.nan, "Sharpe": np.nan, "MaxDD": np.nan}
+
+    vol = rets.std() * np.sqrt(252)
+    sharpe = rets.mean() / rets.std() * np.sqrt(252)
+    cum = (1 + rets).cumprod()
+    roll_max = cum.cummax()
+    drawdown = (cum - roll_max) / roll_max
+    maxdd = drawdown.min()
+
+    stats["Volatility"] = vol
+    stats["Sharpe"] = sharpe
+    stats["MaxDD"] = maxdd
+    return stats
+
+# --------------------------
+# 3. Fetch Data
+# --------------------------
+sector_df = pd.concat([get_sector_breakdown(b, n) for n, b in baskets.items()])
+returns_df = pd.concat([get_basket_returns(b, n) for n, b in baskets.items()])
+
+risk_stats = pd.DataFrame([
+    {"Basket": n, **compute_risk_stats(returns_df[returns_df["Basket"]==n])}
+    for n in baskets.keys()
+])
+
+# --------------------------
+# 4. Visualisations
+# --------------------------
+
+# Sector Breakdown (Grouped Bar)
+fig_sector = px.bar(
+    sector_df,
+    x="sector",
+    y="weight",
+    color="Basket",
+    barmode="group",
+    title="Sector Breakdown Across Baskets"
+)
+
+# Treemap Example
+fig_tree = px.treemap(
+    sector_df,
+    path=["Basket", "sector"],
+    values="weight",
+    color="weight",
+    color_continuous_scale="Blues",
+    title="Treemap of Sector Weights"
+)
+
+# Performance Time Series
+cum_returns = (
+    returns_df.groupby(["Basket","date"])["return"]
+    .mean()
+    .groupby(level=0).cumsum()
+    .reset_index()
+)
+cum_returns["cum_return"] = (1 + returns_df["return"]).groupby(returns_df["Basket"]).cumprod().values
+
+fig_perf = px.line(
+    cum_returns,
+    x="date",
+    y="cum_return",
+    color="Basket",
+    title="Cumulative Returns (1Y)"
+)
+
+# Correlation Heatmap
+pivot = returns_df.pivot(index="date", columns="Basket", values="return").dropna()
+corr = pivot.corr()
+
+fig_corr = go.Figure(
+    data=go.Heatmap(
+        z=corr.values,
+        x=corr.columns,
+        y=corr.index,
+        colorscale="RdYlGn",
+        zmin=-1, zmax=1
+    )
+)
+fig_corr.update_layout(title="Correlation Heatmap Between Baskets")
+
+# Risk Stats Table
+fig_table = go.Figure(
+    data=[go.Table(
+        header=dict(values=list(risk_stats.columns), fill_color="lightgrey", align="center"),
+        cells=dict(values=[risk_stats[c] for c in risk_stats.columns], align="center")
+    )]
+)
+fig_table.update_layout(title="Risk Statistics (1Y)")
+
+# --------------------------
+# 5. Display in App Layout
+# --------------------------
+app = widgets.VBox([
+    widgets.HTML("<h2>Basket Dashboard</h2>"),
+    widgets.HTML("<b>Sector Breakdown</b>"),
+    widgets.Output(),
+    widgets.HTML("<b>Treemap</b>"),
+    widgets.Output(),
+    widgets.HTML("<b>Cumulative Performance</b>"),
+    widgets.Output(),
+    widgets.HTML("<b>Correlation Heatmap</b>"),
+    widgets.Output(),
+    widgets.HTML("<b>Risk Stats Table</b>"),
+    widgets.Output(),
+])
+
+# Render plots into widget outputs
+outs = app.children
+for fig, out in zip([fig_sector, fig_tree, fig_perf, fig_corr, fig_table], outs[2::2]):
+    with out:
+        fig.show()
+
+app
