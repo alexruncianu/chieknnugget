@@ -1,0 +1,87 @@
+import pandas as pd
+import numpy as np
+import bqplot as bq
+from ipywidgets import VBox
+
+# =======================
+# Example data
+# =======================
+data = {
+    "Sector": ["Tech", "Healthcare", "Energy", "Financials", "Consumer"],
+    "Long":   [0.30, 0.05, 0.20, 0.00, 0.10],
+    "Short":  [-0.05, -0.15, -0.10, -0.05, -0.05]
+}
+df = pd.DataFrame(data)
+df["Net"] = df["Long"] + df["Short"]
+
+# =================================================
+# 1. TILE VIEW (GridHeatMap, Longs vs Shorts)
+# =================================================
+# Arrange into two rows: row=0 Long, row=1 Short
+rows = 2
+cols = len(df)
+
+# Values for heatmap (row 0 = Long, row 1 = Short)
+vals = np.vstack([df["Long"].values, df["Short"].values])
+
+color_scale = bq.ColorScale(scheme='RdYlGn', min=vals.min(), max=vals.max())
+
+heatmap = bq.GridHeatMap(
+    color=vals,
+    row=[0, 1],   # two rows: Long, Short
+    column=np.arange(cols),
+    scales={'color': color_scale},
+    enable_hover=True
+)
+
+# Axis labels for readability
+x_ax_hm = bq.Axis(scale=bq.OrdinalScale(), label="Sector", tick_values=np.arange(cols), tick_format=lambda i: df["Sector"].iloc[int(i)])
+y_ax_hm = bq.Axis(scale=bq.OrdinalScale(), orientation="vertical", label="Leg", tick_values=[0, 1], tick_format=lambda i: ["Long", "Short"][int(i)])
+
+fig_tile = bq.Figure(
+    marks=[heatmap],
+    axes=[x_ax_hm, y_ax_hm],
+    title="Sector Return Breakdown (Tile View)"
+)
+
+# =================================================
+# 2. BAR VIEW (Long, Short, Net)
+# =================================================
+x_sc = bq.OrdinalScale()
+y_sc = bq.LinearScale()
+
+x_ax = bq.Axis(scale=x_sc, label="Sector")
+y_ax = bq.Axis(scale=y_sc, label="Return Contribution", orientation="vertical")
+
+# Grouped bars for Long/Short
+bars = bq.Bars(
+    x=df["Sector"].values,
+    y=[df["Long"].values, df["Short"].values],   # grouped
+    scales={'x': x_sc, 'y': y_sc},
+    colors=["green", "red"],
+    labels=["Long", "Short"],
+    display_legend=True,
+    type='grouped'
+)
+
+# Net contribution as blue dots
+net_points = bq.Scatter(
+    x=df["Sector"].values,
+    y=df["Net"].values,
+    scales={'x': x_sc, 'y': y_sc},
+    colors=["blue"],
+    marker="circle",
+    labels=["Net"],
+    display_legend=True
+)
+
+fig_bar = bq.Figure(
+    marks=[bars, net_points],
+    axes=[x_ax, y_ax],
+    title="Sector Performance: Long, Short, and Net"
+)
+
+# =================================================
+# Combine in one layout
+# =================================================
+VBox([fig_tile, fig_bar])
