@@ -85,3 +85,82 @@ fig_bar = bq.Figure(
 # Combine in one layout
 # =================================================
 VBox([fig_tile, fig_bar])
+
+
+
+
+import ipywidgets as widgets
+from IPython.display import display, clear_output
+import bql
+import pandas as pd
+
+# Connect to BQL
+bq = bql.Service()
+
+# --- Function to query returns ---
+def get_returns(basket_id, start_date, end_date):
+    basket = bql.Function(basket_id)
+    field = bql.Fields.PX_PERCENT_CHANGE("daily")
+    dates = bql.DateRange(start_date, end_date, freq="D")
+
+    req = bql.Request(basket, field, dates=dates)
+    res = bq.execute(req)
+    df = res[0].df()
+    df = df.rename(columns={"PX_PERCENT_CHANGE": "Return"})
+    return df
+
+# --- Dropdown for basket selection ---
+basket_dropdown = widgets.Dropdown(
+    options=["SPX Index", "NDX Index", "RTY Index", "SX5E Index"],
+    value="SPX Index",
+    description="Basket:",
+    style={"description_width": "initial"}
+)
+
+# Date pickers
+start_picker = widgets.DatePicker(
+    description="Start:",
+    value=pd.to_datetime("2025-01-01"),
+    style={"description_width": "initial"}
+)
+
+end_picker = widgets.DatePicker(
+    description="End:",
+    value=pd.to_datetime("2025-02-02"),
+    style={"description_width": "initial"}
+)
+
+# Run button
+run_button = widgets.Button(
+    description="Run Analysis",
+    button_style="success"
+)
+
+output = widgets.Output()
+
+# --- Callback ---
+def run_app(_):
+    with output:
+        clear_output(wait=True)
+        try:
+            basket = basket_dropdown.value
+            start = start_picker.value.strftime("%Y-%m-%d")
+            end = end_picker.value.strftime("%Y-%m-%d")
+
+            df = get_returns(basket, start, end)
+
+            if df.empty:
+                print("⚠️ No data returned. Check inputs.")
+                return
+
+            print(f"📊 Returns for {basket} ({start} → {end}):")
+            display(df)
+
+        except Exception as e:
+            print("❌ Error:", str(e))
+
+run_button.on_click(run_app)
+
+# --- Display UI ---
+app = widgets.VBox([basket_dropdown, start_picker, end_picker, run_button, output])
+display(app)
