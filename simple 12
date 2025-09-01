@@ -1,0 +1,280 @@
+import bql
+import pandas as pd
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+from IPython.display import display, clear_output
+
+# -----------------------------------------
+# 1. Connect to BQL
+# -----------------------------------------
+bq = bql.Service()
+
+# -----------------------------------------
+# 2. Widgets for user input
+# -----------------------------------------
+basket_long_widget = widgets.Text(
+    value="BASKET_LONG",
+    description="Long Basket:",
+    style={'description_width': 'initial'},
+    layout=widgets.Layout(width="400px")
+)
+
+basket_short_widget = widgets.Text(
+    value="BASKET_SHORT",
+    description="Short Basket:",
+    style={'description_width': 'initial'},
+    layout=widgets.Layout(width="400px")
+)
+
+start_date_widget = widgets.Text(
+    value="2024-01-01",
+    description="Start Date (YYYY-MM-DD):",
+    style={'description_width': 'initial'},
+    layout=widgets.Layout(width="250px")
+)
+
+end_date_widget = widgets.Text(
+    value="2024-12-31",
+    description="End Date (YYYY-MM-DD):",
+    style={'description_width': 'initial'},
+    layout=widgets.Layout(width="250px")
+)
+
+run_button = widgets.Button(
+    description="Run Attribution",
+    button_style="success",
+    layout=widgets.Layout(width="200px")
+)
+
+# -----------------------------------------
+# 3. Functions
+# -----------------------------------------
+def get_basket_data(basket_id, start_date, end_date):
+    # Constituents & Weights
+    req_members = bql.Request(
+        basket_id,
+        {"id": bq.basket.constituents().id,
+         "weight": bq.basket.constituents().weight}
+    )
+    df_members = bq.execute(req_members).as_dataframe().reset_index()
+    df_members = df_members.rename(columns={"basket.constituents.id":"ID",
+                                            "basket.constituents.weight":"Weight"})
+    
+    # Sector info
+    req_sectors = bql.Request(
+        df_members["ID"].tolist(),
+        {"sector": bq.eq_fundamentals.industryGroup()}
+    )
+    df_sectors = bq.execute(req_sectors).as_dataframe().reset_index()
+    df_sectors = df_sectors.rename(columns={"eq_fundamentals.industryGroup":"Sector"})
+    
+    # Returns
+    req_returns = bql.Request(
+        df_members["ID"].tolist(),
+        {"Return": bq.pricing.dailyPctChange().dates(start_date, end_date)}
+    )
+    df_returns = bq.execute(req_returns).as_dataframe().reset_index()
+    df_returns = df_returns.rename(columns={"pricing.dailyPctChange":"Return"})
+    
+    return df_returns, df_sectors, df_members[["ID","Weight"]]
+
+def compute_basket_attribution(df_returns, df_sectors, df_weights):
+    df = df_returns.merge(df_sectors, on="ID", how="left")
+    df = df.merge(df_weights, on="ID", how="left")
+    df["WeightedReturn"] = df["Return"] * df["Weight"]
+
+    sector_returns = (
+        df.groupby(["Date","Sector"])
+          .agg({"WeightedReturn":"sum", "Weight":"sum"})
+          .reset_index()
+    )
+    total_weights = sector_returns.groupby("Date")["Weight"].transform("sum")
+    sector_returns["SectorContribution"] = sector_returns["WeightedReturn"] / total_weights
+
+    basket_returns = (
+        sector_returns.groupby("Date")["SectorContribution"]
+        .sum()
+        .reset_index(name="BasketReturn")
+    )
+    return sector_returns, basket_returns
+
+# -----------------------------------------
+# 4. Run Attribution on button click
+# -----------------------------------------
+def run_attribution(_):
+    clear_output(wait=True)
+    display(basket_long_widget, basket_short_widget, start_date_widget, end_date_widget, run_button)
+    
+    long_basket = basket_long_widget.value
+    short_basket = basket_short_widget.value
+    start_date = start_date_widget.value
+    end_date = end_date_widget.value
+
+    # Get data
+    df_returns_long, df_sectors_long, df_weights_long = get_basket_data(long_basket, start_date, end_date)
+    df_returns_short, df_sectors_short, df_weights_short = get_basket_data(short_basket, start_date, end_date)
+
+    # Compute attribution
+    sector_long, basket_long = compute_basket_attribution(df_returns_long, df_sectors_long, df_weights_long)
+    sector_short, basket_short = compute_basket_attribution(df_returns_short, df_sectors_short, df_weights_short)
+
+    # Merge long & short
+    basket_all = basket_long.merge(basket_short, on="Date", suffixes=("_Long","_Short"))
+    basket_all["BasketReturn_LS"] = basket_all["BasketReturn_Long"] - basket_all["BasketReturn_Short"]
+
+    sector_all = sector_long.merge(sector_short, on=["Date","Sector"], suffixes=("_Long","_Short"))
+    sector_all["SectorContribution_LS"] = sector_all["SectorContribution_Long"] - sector_all["SectorContribution_Short"]
+
+    # Convert returns to % for readability
+    basket_all[["BasketReturn_Long","BasketReturn_Short","BasketReturn_LS"]] *= 100
+    sector_all[["SectorContribution_Long","SectorContribution_Short","SectorContribution_LS"]] *= 100
+
+    # Show easy-to-read tables
+    print("📊 Basket Returns (%):")
+    display(basket_all.head(10))  # first 10 days
+
+    print("📊 Sector Contributions (%):")
+    display(sector_all.head(10))
+
+    # Line chart
+    plt.figure(figsize=(12,6))
+    plt.plot(basket_all["Date"], basket_all["BasketReturn_Long"], label="Long Basket")
+    plt.plot(basket_all["Date"], basket_all["BasketReturn_Short"], label="Short Basket")
+    plt.plot(basket_all["Date"], basket_all["BasketReturn_LS"], label="Long-Short")
+    plt.axhline(0, color="black", linestyle="--", linewidth=1)
+    plt.title("Basket Returns (%)")
+    plt.xlabel("Date")
+    plt.ylabel("Daily Return (%)")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    # Heatmap
+    heatmap_data = sector_all.pivot(index="Date", columns="Sector", values="SectorContribution_LS")
+    plt.figure(figsize=(12,6))
+    plt.imshow(heatmap_data.T, aspect="auto", cmap="RdYlGn", origin="lower")
+    plt.yticks(range(len(heatmap_data.columns)), heatmap_data.columns)
+    plt.xticks(range(0, len(heatmap_data.index), max(1, len(heatmap_data)//10)),
+               heatmap_data.index.strftime("%Y-%m-%d"), rotation=45, ha="right")
+    plt.colorbar(label="Sector LS Contribution (%)")
+    plt.title("Sector Attribution (Long-Short)")
+    plt.tight_layout()
+    plt.show()
+
+# Attach function to button
+run_button.on_click(run_attribution)
+
+# -----------------------------------------
+# 5. Display widgets
+# -----------------------------------------
+display(basket_long_widget, basket_short_widget, start_date_widget, end_date_widget, run_button)
+
+
+
+import ipywidgets as widgets
+from IPython.display import display, clear_output
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# --------------------------------------------------
+# 1. Example: Your function to get returns
+# --------------------------------------------------
+# Replace the dummy df with your actual BQL query
+def get_returns(basket_id, start_date, end_date):
+    # TODO: replace this block with your real BQL query
+    # Example dummy DataFrame for testing
+    dates = pd.date_range(start_date, end_date, freq="B")  # business days
+    df = pd.DataFrame({
+        "Date": dates,
+        "Return": (0.001 * (pd.Series(range(len(dates))).apply(lambda x: (x % 10) - 5))).values
+    })
+    return df
+
+# --------------------------------------------------
+# 2. Widgets
+# --------------------------------------------------
+basket_widget = widgets.Text(
+    value="MY_BASKET",
+    description="Basket ID:",
+    placeholder="Enter basket ticker",
+    style={"description_width": "initial"}
+)
+
+start_date_widget = widgets.Text(
+    value="2024-01-01",
+    description="Start Date (YYYY-MM-DD):",
+    placeholder="YYYY-MM-DD",
+    style={"description_width": "initial"}
+)
+
+end_date_widget = widgets.Text(
+    value="2024-12-31",
+    description="End Date (YYYY-MM-DD):",
+    placeholder="YYYY-MM-DD",
+    style={"description_width": "initial"}
+)
+
+run_button = widgets.Button(
+    description="Run Analysis",
+    button_style="success",
+    tooltip="Click to run basket return analysis"
+)
+
+output = widgets.Output()
+
+# --------------------------------------------------
+# 3. What happens when you click Run
+# --------------------------------------------------
+def run_app(_):
+    with output:
+        clear_output(wait=True)
+        try:
+            basket = basket_widget.value.strip()
+            start = start_date_widget.value.strip()
+            end = end_date_widget.value.strip()
+
+            if not basket:
+                print("❌ Please enter a valid Basket ID.")
+                return
+            if not start or not end:
+                print("❌ Please enter both start and end dates.")
+                return
+
+            df = get_returns(basket, start, end)
+
+            if df.empty:
+                print(f"⚠️ No return data found for basket {basket} between {start} and {end}.")
+                return
+
+            # Show DataFrame
+            print(f"📊 Returns for {basket} ({start} → {end}):")
+            display(df.head(10))
+
+            # Plot chart
+            plt.figure(figsize=(10,5))
+            plt.plot(df["Date"], df["Return"]*100, label=f"{basket} % Return")
+            plt.axhline(0, color="black", linestyle="--", linewidth=1)
+            plt.title(f"Daily % Returns for {basket}")
+            plt.xlabel("Date")
+            plt.ylabel("Return (%)")
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.show()
+
+        except Exception as e:
+            print("❌ Error running analysis:", str(e))
+
+run_button.on_click(run_app)
+
+# --------------------------------------------------
+# 4. Display the App
+# --------------------------------------------------
+app = widgets.VBox([
+    basket_widget,
+    start_date_widget,
+    end_date_widget,
+    run_button,
+    output
+])
+
+display(app)
