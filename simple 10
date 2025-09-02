@@ -471,3 +471,94 @@ ui = widgets.VBox([
 
 display(ui)
 
+import bql
+import pandas as pd
+import numpy as np
+import ipywidgets as widgets
+from IPython.display import display, clear_output
+import matplotlib.pyplot as plt
+
+# Connect to BQL
+bq = bql.Service()
+
+# ----------------------------------------------------
+# Example Function (replace this with your real query)
+# ----------------------------------------------------
+def get_sector_returns(basket, start_date, end_date):
+    # Example: this would normally be a BQL query
+    dates = pd.date_range(start_date, end_date, freq="D")
+    df = pd.DataFrame(
+        np.random.randn(len(dates), 4) / 100,
+        index=dates,
+        columns=["Tech", "Financials", "Energy", "Healthcare"]
+    )
+    return df
+
+# ----------------------------------------------------
+# Widgets
+# ----------------------------------------------------
+basket_dropdown = widgets.Dropdown(
+    options=["SPX Index", "NDX Index", "RTY Index", "SX5E Index"],
+    value="SPX Index",
+    description="Basket:",
+    layout=widgets.Layout(width="250px")
+)
+
+start_picker = widgets.DatePicker(
+    description="Start Date:",
+    layout=widgets.Layout(width="200px")
+)
+
+end_picker = widgets.DatePicker(
+    description="End Date:",
+    layout=widgets.Layout(width="200px")
+)
+
+run_button = widgets.Button(
+    description="Run Analysis",
+    button_style="info",
+    layout=widgets.Layout(width="180px")
+)
+
+output = widgets.Output()
+
+# ----------------------------------------------------
+# Callback
+# ----------------------------------------------------
+def run_analysis(_):
+    with output:
+        clear_output(wait=True)
+        
+        # Check inputs
+        if not basket_dropdown.value or not start_picker.value or not end_picker.value:
+            print("Please select a basket and dates.")
+            return
+        
+        basket = basket_dropdown.value
+        start = start_picker.value.strftime("%Y-%m-%d")
+        end = end_picker.value.strftime("%Y-%m-%d")
+        
+        # Get DataFrame from function
+        df = get_sector_returns(basket, start, end)
+        
+        # Display DataFrame
+        print(f"Sector returns for {basket} ({start} → {end}):")
+        display(df.style.background_gradient(cmap="coolwarm"))
+        
+        # Plot chart
+        df.cumsum().plot(figsize=(10, 5), linewidth=2)
+        plt.title(f"Cumulative Sector Returns: {basket}", fontsize=14)
+        plt.ylabel("Cumulative Return")
+        plt.grid(True, alpha=0.3)
+        plt.show()
+
+run_button.on_click(run_analysis)
+
+# ----------------------------------------------------
+# Layout
+# ----------------------------------------------------
+controls = widgets.HBox([basket_dropdown, start_picker, end_picker, run_button])
+ui = widgets.VBox([controls, output])
+
+display(ui)
+
