@@ -326,3 +326,148 @@ ui = widgets.VBox([
 ])
 
 display(ui)
+
+import ipywidgets as widgets
+from IPython.display import display, clear_output
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+
+# -------------------------------
+# Example Functions (Replace with your BQL queries)
+# -------------------------------
+
+def xyz(baskets, start_date, end_date):
+    """
+    Example: Sector returns for a basket between dates
+    Replace the mock df with your real BQL query.
+    """
+    dates = pd.date_range(start_date, end_date, freq="D")
+    sectors = ["Tech", "Financials", "Energy", "Healthcare"]
+
+    data = {s: np.random.randn(len(dates)) / 100 for s in sectors}
+    df = pd.DataFrame(data, index=dates)
+
+    return df
+
+
+def std_moves(baskets, start_date, end_date):
+    """
+    Example: Std dev moves for baskets
+    Replace the mock df with your real BQL query.
+    """
+    data = {
+        "Basket": baskets,
+        "StdDev": np.random.rand(len(baskets)) * 2
+    }
+    df = pd.DataFrame(data)
+    return df
+
+# -------------------------------
+# Widgets
+# -------------------------------
+
+basket_dropdown = widgets.SelectMultiple(
+    options=["SPX Index", "NDX Index", "RTY Index", "SX5E Index"],
+    value=["SPX Index"],
+    description="Baskets",
+    style={"description_width": "initial"}
+)
+
+start_picker = widgets.DatePicker(
+    description="Start"
+)
+
+end_picker = widgets.DatePicker(
+    description="End"
+)
+
+chart_type = widgets.Dropdown(
+    options=["Bar Chart (Last Day)", "Line Chart (Cumulative Returns)"],
+    value="Bar Chart (Last Day)",
+    description="Chart Type"
+)
+
+run_button = widgets.Button(
+    description="Run Analysis",
+    button_style="success"
+)
+
+output = widgets.Output()
+
+# -------------------------------
+# Callback
+# -------------------------------
+
+def run_analysis(_):
+    with output:
+        clear_output(wait=True)
+        baskets = list(basket_dropdown.value)
+        if not baskets or not start_picker.value or not end_picker.value:
+            print("Please select baskets and valid start/end dates.")
+            return
+
+        start = start_picker.value.strftime("%Y-%m-%d")
+        end = end_picker.value.strftime("%Y-%m-%d")
+
+        # Call the functions (now returning DataFrames)
+        df_sector = xyz(baskets, start, end)
+        df_std = std_moves(baskets, start, end)
+
+        # Tabs for display
+        tab = widgets.Tab()
+        tab.children = [
+            widgets.Output(),  # Sector Returns
+            widgets.Output(),  # Std Dev Moves
+            widgets.Output()   # Charts
+        ]
+        tab.set_title(0, "Sector Returns")
+        tab.set_title(1, "Std Dev Moves")
+        tab.set_title(2, "Charts")
+
+        # Fill tabs
+        with tab.children[0]:
+            display(df_sector)
+
+        with tab.children[1]:
+            display(df_std)
+
+        with tab.children[2]:
+            if chart_type.value == "Bar Chart (Last Day)":
+                try:
+                    df_sector.iloc[-1].plot(
+                        kind="bar", figsize=(7,4),
+                        color="steelblue", edgecolor="black"
+                    )
+                    plt.title(f"Sector Returns on {df_sector.index[-1].date()}")
+                    plt.ylabel("Return")
+                    plt.show()
+                except:
+                    print("No data available for bar chart")
+            else:
+                try:
+                    (1 + df_sector).cumprod().plot(figsize=(8,4))
+                    plt.title("Cumulative Sector Returns")
+                    plt.ylabel("Growth of 1 unit")
+                    plt.show()
+                except:
+                    print("No data available for line chart")
+
+        display(tab)
+
+run_button.on_click(run_analysis)
+
+# -------------------------------
+# Display Layout
+# -------------------------------
+
+ui = widgets.VBox([
+    widgets.HTML("<h2 style='color:navy'>Basket Return & Risk Dashboard</h2>"),
+    widgets.HBox([basket_dropdown, start_picker, end_picker]),
+    chart_type,
+    run_button,
+    output
+])
+
+display(ui)
+
