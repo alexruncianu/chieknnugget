@@ -135,3 +135,156 @@ data = {
 df = pd.DataFrame.from_dict(data, orient="index", columns=["Return (%)"])
 
 plot_sector_stack(df, "SPX Index")
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from IPython.display import display, HTML
+
+# Example function (replace with your real BQL query)
+def get_sector_returns(basket, start_date, end_date):
+    """
+    Example sector returns function.
+    Replace this with your real BQL call.
+    """
+    # For demo: fake data
+    data = {
+        "Technology": 0.25,
+        "Financials": 0.10,
+        "Energy": -0.05,
+        "Healthcare": 0.15,
+        "Consumer": 0.05
+    }
+    df = pd.DataFrame.from_dict(data, orient="index", columns=["Return (%)"])
+    return df
+
+
+def plot_sector_stack(df, basket_name):
+    """
+    Plot sector attribution as stacked horizontal bar
+    """
+    series = df.iloc[:, 0]  # 1st column = returns
+    total = series.sum()
+    if total == 0:
+        print("Total return = 0, cannot plot proportions")
+        return
+
+    proportions = series / total
+
+    fig, ax = plt.subplots(figsize=(12, 2))
+    left = 0
+    colors = plt.cm.tab20.colors
+
+    for i, (sector, val) in enumerate(series.items()):
+        width = proportions[sector]
+        ax.barh(0, width, left=left, 
+                color=colors[i % len(colors)], edgecolor="white")
+        ax.text(left + width/2, 0, f"{sector}\n{val:.2f}%", 
+                ha="center", va="center", fontsize=9, color="white", weight="bold")
+        left += width
+
+    ax.set_xlim(0,1)
+    ax.axis("off")
+    ax.set_title(f"{basket_name} Sector Attribution\nTotal Return = {total:.2f}%", 
+                 fontsize=14, weight="bold")
+
+    plt.show()
+
+
+def show_sector_table(df):
+    """
+    Show sector returns in a nice HTML table
+    """
+    styled = df.style.background_gradient(cmap="RdYlGn").format("{:.2%}")
+    display(HTML(styled.to_html()))
+
+
+# ----------- RUN EXAMPLE -------------
+basket = "SPX Index"
+start = "2025-01-01"
+end   = "2025-02-01"
+
+# 1. Get data (your BQL call here)
+df = get_sector_returns(basket, start, end)
+
+# 2. Display table
+show_sector_table(df)
+
+# 3. Plot stacked bar
+plot_sector_stack(df, basket)
+
+
+import ipywidgets as widgets
+from IPython.display import display
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# Example backend functions
+# -----------------------------
+def get_sector_returns(basket, start, end):
+    data = {"Tech": 0.20, "Financials": 0.10, "Energy": -0.05}
+    return pd.DataFrame.from_dict(data, orient="index", columns=["Return"])
+
+def get_std_moves(basket, start, end):
+    data = {"1D": 1.2, "1W": 2.5, "1M": 4.1}
+    return pd.DataFrame.from_dict(data, orient="index", columns=["Std Move"])
+
+
+# -----------------------------
+# Input widgets
+# -----------------------------
+basket_input = widgets.Text(value="SPX Index", description="Basket:")
+start_input = widgets.DatePicker(description="Start:")
+end_input   = widgets.DatePicker(description="End:")
+run_button  = widgets.Button(description="Run", button_style="success")
+
+# Output areas
+output1 = widgets.Output()
+output2 = widgets.Output()
+
+# -----------------------------
+# Functions to run on click
+# -----------------------------
+def run_sector(button):
+    with output1:
+        output1.clear_output()
+        df = get_sector_returns(basket_input.value, start_input.value, end_input.value)
+        display(df)
+
+        # Plot stacked bar
+        fig, ax = plt.subplots(figsize=(6,1.5))
+        df["Return"].plot.barh(ax=ax, color="skyblue")
+        ax.set_title("Sector Attribution")
+        plt.show()
+
+def run_std(button):
+    with output2:
+        output2.clear_output()
+        df = get_std_moves(basket_input.value, start_input.value, end_input.value)
+        display(df)
+
+# Connect button
+run_button.on_click(run_sector)
+run_button.on_click(run_std)
+
+# -----------------------------
+# Layout
+# -----------------------------
+# Top menu bar
+menu = widgets.HTML("<h2 style='text-align:center;color:#2a7;'>📊 Trading Dashboard</h2>")
+
+# Input row centered
+inputs = widgets.HBox([basket_input, start_input, end_input, run_button], 
+                      layout=widgets.Layout(justify_content="center"))
+
+# Tabs for switching
+tab = widgets.Tab(children=[widgets.VBox([output1]), widgets.VBox([output2])])
+tab.set_title(0, "Sector Attribution")
+tab.set_title(1, "Std Moves")
+
+# Final app layout
+app = widgets.VBox([menu, inputs, tab])
+
+display(app)
+
