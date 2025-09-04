@@ -79,3 +79,59 @@ plt.figure(figsize=(12,6))
 cum_sector_rets.plot(title="Custom Basket - Sector Factor Cumulative Returns")
 plt.ylabel("Growth of $1")
 plt.show()
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
+def plot_sector_stack(df, basket_name):
+    """
+    df: DataFrame with sector returns (%)
+    basket_name: str basket label
+    """
+
+    # Flatten into Series if DataFrame
+    if isinstance(df, pd.DataFrame):
+        series = df.iloc[:,0]  # assume first col = returns
+    else:
+        series = df
+
+    # Total attribution
+    total = series.sum()
+    if total == 0:
+        print("Total return = 0, cannot plot proportions")
+        return
+
+    # Proportions
+    proportions = series / total
+
+    # Plot stacked horizontal bar
+    fig, ax = plt.subplots(figsize=(10, 2))
+    left = 0
+    colors = plt.cm.tab20.colors  # get distinct colors
+
+    for i, (sector, val) in enumerate(series.items()):
+        width = proportions[sector]
+        ax.barh(0, width, left=left, color=colors[i % len(colors)], edgecolor="white")
+        # Label inside the block
+        ax.text(left + width/2, 0, f"{sector}\n{val:.2f}%", 
+                ha="center", va="center", fontsize=9, color="white", weight="bold")
+        left += width
+
+    ax.set_xlim(0,1)
+    ax.set_ylim(-0.5,0.5)
+    ax.axis("off")
+    ax.set_title(f"{basket_name} Sector Attribution Breakdown\nTotal Return = {total:.2f}%", fontsize=14, weight="bold")
+
+    plt.show()
+
+
+# --- Example use ---
+data = {
+    "Tech": 0.20,
+    "Financials": 0.15,
+    "Energy": -0.05,
+    "Healthcare": 0.10
+}
+df = pd.DataFrame.from_dict(data, orient="index", columns=["Return (%)"])
+
+plot_sector_stack(df, "SPX Index")
