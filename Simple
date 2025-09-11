@@ -84,3 +84,48 @@ if __name__ == "__main__":
         print("First 5 weights:", weights[:5])
     except Exception as e:
         print("Error:", e)
+
+
+import bqdata as bqd
+import pandas as pd
+
+# Assume you already have a DataFrame like:
+# movers_df = pd.DataFrame({
+#     "date": [...],         # event date (after-hours mover date)
+#     "ticker": [...],       # e.g. "AAPL US Equity"
+#     "move": [...]          # after-hours % move
+# })
+# index = event date if you prefer
+
+movers_df["date"] = pd.to_datetime(movers_df["date"])
+
+# Step 1: get next trading day returns for each (ticker, date)
+def get_next_day_return(ticker, date):
+    # pull close prices around event date
+    px = bqd.get_series(ticker, "PX_LAST", date, date + pd.Timedelta(days=5), period="DAILY")
+    df = pd.DataFrame(px, columns=["close"])
+    df.index = pd.to_datetime(df.index).sort_values()
+
+    if date not in df.index:
+        return None
+    
+    try:
+        today_close = df.loc[date, "close"]
+        next_date = df.index[df.index.get_loc(date) + 1]
+        next_close = df.loc[next_date, "close"]
+        return (next_close / today_close) - 1
+    except:
+        return None
+
+movers_df["next_day_return"] = movers_df.apply(
+    lambda row: get_next_day_return(row["ticker"], row["date"]),
+    axis=1
+)
+
+# Step 2: analyze performance
+summary = movers_df.groupby(pd.qcut(movers_df["move"], 5))["next_day_return"].mean()
+print("Average next-day return by after-hours move quintile:")
+print(summary)
+
+# Step 3: overall stats
+print("Overall average next-day return:", movers_df["next_day_return"].mean())
