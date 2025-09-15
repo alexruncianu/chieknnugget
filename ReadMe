@@ -16,3 +16,293 @@ This performance differential highlights a classic market inefficiency. Both sha
 
 Conclusion
 The outperformance of Class B shares appears to be primarily driven by market microstructure effects rather than fundamental factors. The combination of index fund purchasing patterns, lower liquidity creating a scarcity premium, and the share buyback program has created conditions where Class B shares have significantly outperformed their Class A counterparts. This represents a market inefficiency that experienced investors like yourself often identify - identical economic exposure trading at different implicit valuations due to structural factors rather than fundamental differences.
+
+# Backtest: After-hours gapers -> trade momentum into main session
+# Run in a bQuant Jupyter notebook. Adapt data fetch to your BQL / bQuant utilities.
+import pandas as pd
+import numpy as np
+import datetime as dt
+from typing import List, Tuple, Dict
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# USER CONFIG
+# -----------------------------
+START = "2023-01-01"   # backtest start (YYYY-MM-DD)
+END   = "2025-08-31"   # backtest end
+UNIVERSE = "US_EQ"     # placeholder list or universe name you will provide
+GAP_THRESHOLD = 0.02   # only trade gaps greater than 2% (absolute)
+MIN_VOLUME = 100_000   # minimum ADV or today's after-hours volume (optional)
+MAX_POSITIONS = 20     # portfolio max number of names in a day
+TRADE_FEE = 0.0005     # commission per share (or percent). adjust to your firm's model
+SLIPPAGE = 0.0005      # per trade slippage as fraction of price
+HOLD = 1               # holding period in trading days (1 = enter at open, exit at close same day)
+CAPITAL = 1_000_000    # starting capital
+
+# -----------------------------
+# Helper: Data fetch (ADAPT THIS)
+# -----------------------------
+def fetch_price_data(tickers: List[str], start: str, end: str) -> Dict[str, pd.DataFrame]:
+    """
+    Returns a dict: ticker -> DataFrame indexed by DATE with columns:
+      - prev_close: previous regular session close price (close_t-1)
+      - ah_last: last after-hours price (post-market; e.g., last trade after 16:00 ET)
+      - open: regular session open price (next trading day open)
+      - close: regular session close price (same day close)
+      - volume: regular session volume (for filters)
+      - ah_volume: after-hours volume (optional)
+    IMPORTANT: Replace this stub with a BQL / bQuant intraday / field query that returns these fields.
+    """
+    # --- EXAMPLE STUB USING CSV/LOCAL DATA OR SAMPLE GENERATED DATA (for testing) ---
+    # If you have real bQuant access, replace the below with a BQL query.
+    # Example BQL pseudocode you'd call (conceptual):
+    #   request = bql.Request(
+    #       bql.data(['PX_LAST'], universe).with_session('AFTER_HOURS') ...
+    #   )
+    # then transform results into the DataFrame described below.
+    #
+    # For now: build empty structure for each ticker.
+    out = {}
+    dates = pd.bdate_range(start, end)
+    for t in tickers:
+        # random walk stub (REMOVE when using real data)
+        rng = np.cumprod(1 + np.random.normal(0, 0.01, size=len(dates)))
+        prev_close = 100.0 * rng
+        # simulate small after-hours move
+        ah_last = prev_close * (1 + np.random.normal(0, 0.02, size=len(dates)))
+        open_p = prev_close * (1 + np.random.normal(0, 0.005, size=len(dates)))
+        close_p = open_p * (1 + np.random.normal(0, 0.01, size=len(dates)))
+        df = pd.DataFrame({
+            'date': dates,
+            'prev_close': prev_close,
+            'ah_last': ah_last,
+            'open': open_p,
+            'close': close_p,
+            'volume': np.random.randint(50_000, 2_000_000, size=len(dates)),
+            'ah_volume': np.random.randint(0, 50_000, size=len(dates))
+        }).set_index('date')
+        out[t] = df
+    return out
+
+# -----------------------------
+# Utility: assemble panel
+# -----------------------------
+def build_panel(tickers: List[str], start: str, end: str) -> pd.DataFrame:
+    data = fetch_price_data(tickers, start, end)
+    # Align into MultiIndex DataFrame: index=date, columns=(ticker, field)
+    frames = []
+    for t, df in data.items():
+        # add ticker level
+        df2 = df.copy()
+        df2.columns = pd.MultiIndex.from_product([[t], df2.columns])
+        frames.append(df2)
+    panel = pd.concat(frames, axis=1).sort_index()
+    return panel
+
+# -----------------------------
+# Strategy: compute gap signals and daily trades
+# -----------------------------
+def compute_daily_signals(panel: pd.DataFrame, gap_threshold: float) -> pd.DataFrame:
+    """
+    Returns DataFrame indexed by date with columns:
+      - longs: list of tickers to long
+      - shorts: list of tickers to short
+      - signals: dict ticker -> signal (1 long, -1 short, 0 nothing)
+    """
+    dates = panel.index.unique()
+    tickers = sorted({col[0] for col in panel.columns})
+    signals_by_date = []
+    for date in dates:
+        # For each ticker compute gap = ah_last / prev_close - 1 (on date t)
+        row = panel.loc[date]
+        signal_map = {}
+        longers, shorters = [], []
+        for t in tickers:
+            try:
+                prev_close = row[(t, 'prev_close')]
+                ah_last = row[(t, 'ah_last')]
+                vol = row[(t, 'volume')]
+            except KeyError:
+                continue
+            if np.isnan(prev_close) or prev_close <= 0:
+                continue
+            gap = (ah_last / prev_close) - 1.0
+            if abs(gap) < gap_threshold:
+                sig = 0
+            elif gap >= gap_threshold:
+                sig = 1
+                longers.append(t)
+            elif gap <= -gap_threshold:
+                sig = -1
+                shorters.append(t)
+            else:
+                sig = 0
+            signal_map[t] = {'signal': sig, 'gap': gap, 'volume': vol}
+        signals_by_date.append({
+            'date': date,
+            'longs': longers,
+            'shorts': shorters,
+            'signals': signal_map
+        })
+    df = pd.DataFrame(signals_by_date).set_index('date')
+    return df
+
+# -----------------------------
+# Execution/backtest engine
+# -----------------------------
+def backtest(panel: pd.DataFrame,
+             signals_df: pd.DataFrame,
+             capital: float = CAPITAL,
+             max_positions: int = MAX_POSITIONS,
+             fee: float = TRADE_FEE,
+             slippage: float = SLIPPAGE) -> pd.DataFrame:
+    """
+    Simple daily backtester:
+      - At each date, choose up to max_positions from longs and shorts (equal weight inside each side)
+      - Buy at 'open' price, sell at 'close' same day (HOLD=1)
+      - Compute P&L, portfolio NAV, returns
+    """
+    nav = capital
+    nav_hist = []
+    trades = []
+    dates = signals_df.index
+    tickers = sorted({col[0] for col in panel.columns})
+
+    for date in dates:
+        row = panel.loc[date]
+        srow = signals_df.loc[date]
+        longs = srow['longs'][:]
+        shorts = srow['shorts'][:]
+
+        # limit positions
+        # prioritize by magnitude of gap (largest gaps first)
+        def sort_and_limit(lst, sign):
+            scored = []
+            for t in lst:
+                gap = srow['signals'][t]['gap']
+                scored.append((t, abs(gap)))
+            scored = sorted(scored, key=lambda x: -x[1])
+            chosen = [x[0] for x in scored[:max_positions//2]]
+            return chosen
+
+        longs = sort_and_limit(longs, 1)
+        shorts = sort_and_limit(shorts, -1)
+
+        n_long = len(longs)
+        n_short = len(shorts)
+        total_positions = n_long + n_short
+        if total_positions == 0:
+            nav_hist.append({'date': date, 'nav': nav, 'daily_return': 0.0})
+            continue
+
+        # allocate equal weight per position up to capital
+        weight = nav / total_positions
+
+        daily_pnl = 0.0
+        daily_turnover = 0.0
+
+        # execute longs
+        for t in longs:
+            try:
+                p_open = row[(t, 'open')]
+                p_close = row[(t, 'close')]
+            except KeyError:
+                continue
+            shares = weight / (p_open * (1 + slippage))
+            # entry cost
+            entry_cost = shares * p_open * (1 + slippage) + shares * p_open * fee
+            exit_proceeds = shares * p_close * (1 - slippage) - shares * p_close * fee
+            pnl = exit_proceeds - entry_cost
+            daily_pnl += pnl
+            daily_turnover += shares * p_open
+
+            trades.append({'date': date, 'ticker': t, 'side': 'long', 'open': p_open,
+                           'close': p_close, 'shares': shares, 'pnl': pnl})
+
+        # execute shorts (simplified: proceeds at open, buy-to-cover at close)
+        for t in shorts:
+            try:
+                p_open = row[(t, 'open')]
+                p_close = row[(t, 'close')]
+            except KeyError:
+                continue
+            shares = weight / (p_open * (1 + slippage))
+            # for a short: sell at open, buy back at close
+            proceeds = shares * p_open * (1 - slippage) - shares * p_open * fee
+            cover_cost = shares * p_close * (1 + slippage) + shares * p_close * fee
+            pnl = proceeds - cover_cost
+            daily_pnl += pnl
+            daily_turnover += shares * p_open
+            trades.append({'date': date, 'ticker': t, 'side': 'short', 'open': p_open,
+                           'close': p_close, 'shares': shares, 'pnl': pnl})
+
+        daily_return = daily_pnl / nav
+        nav = nav + daily_pnl
+        nav_hist.append({'date': date, 'nav': nav, 'daily_return': daily_return, 'pnl': daily_pnl, 'turnover': daily_turnover})
+
+    nav_df = pd.DataFrame(nav_hist).set_index('date')
+    trades_df = pd.DataFrame(trades)
+    return nav_df, trades_df
+
+# -----------------------------
+# Performance metrics & plots
+# -----------------------------
+def performance_report(nav_df: pd.DataFrame, trades_df: pd.DataFrame):
+    nav_df['cum_return'] = nav_df['nav'] / nav_df['nav'].iloc[0] - 1.0
+    returns = nav_df['daily_return'].fillna(0.0)
+    ann_return = (1 + nav_df['cum_return'].iloc[-1]) ** (252 / len(nav_df)) - 1 if len(nav_df) > 0 else np.nan
+    ann_vol = returns.std() * np.sqrt(252)
+    sharpe = (returns.mean() * 252) / (returns.std() * np.sqrt(252)) if returns.std() > 0 else np.nan
+    total_trades = len(trades_df)
+    avg_daily_turnover = nav_df['turnover'].mean() if 'turnover' in nav_df.columns else np.nan
+
+    print("=== Performance Summary ===")
+    print(f"Start NAV: {nav_df['nav'].iloc[0]:.2f}")
+    print(f"End NAV:   {nav_df['nav'].iloc[-1]:.2f}")
+    print(f"Total return: {nav_df['cum_return'].iloc[-1]*100:.2f}%")
+    print(f"Ann. return (est): {ann_return*100:.2f}%")
+    print(f"Ann. vol (est): {ann_vol*100:.2f}%")
+    print(f"Sharpe (est): {sharpe:.2f}")
+    print(f"Total trades: {total_trades}")
+    print(f"Avg daily turnover: {avg_daily_turnover:.2f}")
+
+    # Plot NAV
+    plt.figure(figsize=(10,5))
+    plt.plot(nav_df.index, nav_df['nav'])
+    plt.title('NAV over time')
+    plt.xlabel('Date')
+    plt.ylabel('NAV')
+    plt.grid(True)
+    plt.show()
+
+    # Simple P&L histogram
+    if not trades_df.empty:
+        plt.figure(figsize=(8,4))
+        plt.hist(trades_df['pnl'], bins=50)
+        plt.title('Trade PnL distribution')
+        plt.xlabel('PnL')
+        plt.show()
+
+# -----------------------------
+# RUN: assemble universe, build panel, compute signals, backtest
+# -----------------------------
+# Replace with a real list / BQL universe query in bQuant:
+# e.g., tickers = bq.get_universe('US_EQUITY_LARGE_CAP') or load your list
+# For demonstration, we'll create a small synthetic ticker list; replace before live run.
+tickers = ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'TSLA', 'NVDA', 'META', 'NFLX', 'INTC', 'AMD']
+
+panel = build_panel(tickers, START, END)            # ADAPT: this should use real bQuant/BQL fetch
+signals_df = compute_daily_signals(panel, GAP_THRESHOLD)
+nav_df, trades_df = backtest(panel, signals_df, capital=CAPITAL)
+
+# Show results
+performance_report(nav_df, trades_df)
+
+# Optionally: display top winners / losers
+if not trades_df.empty:
+    print("\nTop 10 winning trades:")
+    print(trades_df.sort_values('pnl', ascending=False).head(10))
+    print("\nTop 10 losing trades:")
+    print(trades_df.sort_values('pnl').head(10))
+
+
