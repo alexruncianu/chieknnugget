@@ -306,3 +306,255 @@ if not trades_df.empty:
     print(trades_df.sort_values('pnl').head(10))
 
 
+
+# Simple daily after-hours gap trading backtest for bQuant (BQL)
+# Paste into a bQuant notebook. Requires bql package available in bQuant: `import bql`
+# Two modes: intraday preferred (minute bars) or fallback to end-of-day fields.
+# Strategy: each date form a new portfolio of top |gap| movers after-hours;
+#           long gap-up names, short gap-down names, equal weight, enter at open, exit at close same day.
+
+import bql
+from bql.util import get_time_series   # available in many bQuant environments
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+
+# -------------------------
+# User config (edit)
+# -------------------------
+bq = bql.Service()                # typical bQuant BQL client
+START = "2023-01-01"
+END   = "2025-08-31"
+UNIVERSE = "SPX Index"           # Example: S&P 500 index members (change to your universe or list)
+TOP_N = 20                       # target number of names each day (sum of longs+shorts)
+GAP_THRESHOLD = 0.0              # absolute gap threshold (0 = take top movers by abs gap)
+MIN_AVG_VOLUME = 50_000         # optional liquidity filter (daily volume)
+TRANSACTION_COST_PCT = 0.0005    # percent round-trip (entry+exit modelled simply)
+SLIPPAGE_PCT = 0.0005            # slippage per trade
+START_CAPITAL = 1_000_000
+
+# -------------------------
+# Helper functions
+# -------------------------
+def get_universe_members(universe_name):
+    """
+    Returns a list of tickers for the universe.
+    Example: 'SPX Index' -> returns S&P 500 members.
+    If you prefer a static list, replace this function or return a Python list.
+    """
+    try:
+        members = bq.univ.members(universe_name)
+        # convert to Bloomberg style tickers if necessary (bql returns security objects)
+        secs = [s for s in members]  # may already be strings like 'AAPL US Equity'
+        return secs
+    except Exception as e:
+        print("Universe query failed; falling back to sample list. Error:", e)
+        return ['AAPL US Equity','MSFT US Equity','AMZN US Equity','TSLA US Equity','NVDA US Equity']
+
+def fetch_day_data(securities, date_str):
+    """
+    For a given list of securities and a particular date (YYYY-MM-DD),
+    attempt to fetch:
+      - prev_close: previous regular session close (PX_LAST at t-1)
+      - after_hours_last: last trade price after 16:00 ET on date t (from intraday bars if available)
+      - open: next session open (we use open on date+1 for entry)
+      - close: next session close (close on date+1 for exit)
+      - volume: regular session volume on date+1 (for liquidity filters)
+    Returns a DataFrame indexed by security with these columns.
+    NOTE: you may need to adapt intraday time window to local exchange hours or your data availability.
+    """
+    # parse date and compute neighbors
+    date = pd.to_datetime(date_str).date()
+    prev_date = (pd.to_datetime(date_str) - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    next_date = (pd.to_datetime(date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+
+    results = []
+
+    # Try intraday minute bars first (preferred)
+    use_intraday = True
+    try:
+        # get_time_series supports intraday if your bQuant has access -- 1m bars for the given day
+        # we'll query minute bars for the evening window (16:00:01 to 23:59:59) on the date and take last price
+        # and also request next_date open/close via daily(px_open, px_close)
+        intraday = get_time_series(securities,
+                                   ['PX_LAST'],
+                                   start=date_str,
+                                   end=date_str,
+                                   barSize='1m',
+                                   raw=True)
+        # intraday is a dict or dataframe; handle flexibly
+        # We'll attempt to extract last trade time after 16:00 and drop if not found.
+    except Exception:
+        use_intraday = False
+
+    # Fallback: use daily fields only (less accurate). We'll get prev close on date and open/close on next_date.
+    try:
+        # BQL single request for daily fields (prev close on date, open/close on next date)
+        # Using BQL string interface is often robust; get px_last for date and px_open/px_close for next_date
+        # Note: if your environment supports date ranges you can shift; else run two queries.
+        q_prev = f"get(PX_LAST) for({securities})"
+        res_prev = bq.execute(q_prev)  # might return point-in-time; we'll extract series if available
+        # Simpler approach below: use get_time_series for daily px_open/px_close for a two-day window and index appropriately
+        ts = get_time_series(securities, ['PX_OPEN','PX_CLOSE','PX_LAST','VOLUME'], start=prev_date, end=next_date)
+        # ts is a MultiIndex DataFrame: (security, field)
+        # We'll synthesize the required columns per security
+        for sec in securities:
+            try:
+                sec_idx = sec
+                # prev_close from prev_date (PX_LAST on prev_date)
+                prev_close = ts.loc[prev_date][(sec_idx,'PX_LAST')] if prev_date in ts.index else np.nan
+                # after_hours_last: if intraday found, take it; otherwise use PX_LAST on date as approximation
+                if use_intraday and sec in intraday:
+                    # intraday[sec] is a DataFrame of minute bars; pick last price after 16:00
+                    df_intr = intraday[sec]
+                    if not df_intr.empty:
+                        # times are likely timezone-aware; we filter by time >=16:00
+                        df_intr.index = pd.to_datetime(df_intr.index)
+                        df_af = df_intr[df_intr.index.time >= pd.to_datetime("16:00").time()]
+                        after_hours_last = df_af['PX_LAST'].iloc[-1] if not df_af.empty else np.nan
+                    else:
+                        after_hours_last = np.nan
+                else:
+                    after_hours_last = ts.loc[date_str][(sec_idx,'PX_LAST')] if date_str in ts.index else np.nan
+
+                # Next session open/close (entry/exit) from next_date
+                open_p = ts.loc[next_date][(sec_idx,'PX_OPEN')] if next_date in ts.index else np.nan
+                close_p = ts.loc[next_date][(sec_idx,'PX_CLOSE')] if next_date in ts.index else np.nan
+                vol = ts.loc[next_date][(sec_idx,'VOLUME')] if next_date in ts.index else np.nan
+
+                results.append({
+                    'security': sec,
+                    'prev_close': prev_close,
+                    'after_hours_last': after_hours_last,
+                    'open': open_p,
+                    'close': close_p,
+                    'volume': vol
+                })
+            except Exception:
+                results.append({'security': sec, 'prev_close': np.nan, 'after_hours_last': np.nan, 'open': np.nan, 'close': np.nan, 'volume': np.nan})
+    except Exception as e:
+        print("Daily data fetch failed; error:", e)
+        # Build empty frame to avoid crashing
+        for sec in securities:
+            results.append({'security': sec, 'prev_close': np.nan, 'after_hours_last': np.nan, 'open': np.nan, 'close': np.nan, 'volume': np.nan})
+
+    df = pd.DataFrame(results).set_index('security')
+    return df
+
+def compute_gaps(df):
+    """
+    df has prev_close and after_hours_last columns; compute gap = (after_hours_last / prev_close - 1)
+    """
+    df = df.copy()
+    df['gap'] = df['after_hours_last'] / df['prev_close'] - 1
+    return df
+
+# -------------------------
+# Backtest engine (simple)
+# -------------------------
+def run_backtest(start, end, universe_name, top_n=TOP_N):
+    # build trading calendar (business days)
+    dates = pd.bdate_range(start, end).strftime('%Y-%m-%d').tolist()
+    secs_master = get_universe_members(universe_name)
+    nav = START_CAPITAL
+    nav_hist = []
+    trades = []
+
+    for date in dates[:-1]:  # last date can't trade because we need next open/close
+        try:
+            # For speed: restrict to universe members (could be thousands) - you can also prefilter by ADV outside loop
+            df_day = fetch_day_data(secs_master, date)
+            # drop rows missing required fields
+            df_day = df_day.dropna(subset=['prev_close','after_hours_last','open','close'])
+            if df_day.empty:
+                nav_hist.append({'date': date, 'nav': nav, 'daily_return': 0.0})
+                continue
+
+            df_day = compute_gaps(df_day)
+
+            # Optional liquidity filter
+            df_day = df_day[df_day['volume'] >= MIN_AVG_VOLUME]
+
+            # Rank by absolute gap magnitude (largest movers)
+            df_day['abs_gap'] = df_day['gap'].abs()
+            df_day = df_day.sort_values('abs_gap', ascending=False)
+
+            # Select top_n movers (if threshold > 0, only those exceeding threshold)
+            if GAP_THRESHOLD > 0:
+                df_sel = df_day[df_day['abs_gap'] >= GAP_THRESHOLD].head(top_n)
+            else:
+                df_sel = df_day.head(top_n)
+
+            if df_sel.empty:
+                nav_hist.append({'date': date, 'nav': nav, 'daily_return': 0.0})
+                continue
+
+            # Determine longs and shorts
+            longs = df_sel[df_sel['gap'] > 0]
+            shorts = df_sel[df_sel['gap'] < 0]
+
+            n_long = len(longs)
+            n_short = len(shorts)
+            total_positions = n_long + n_short
+            if total_positions == 0:
+                nav_hist.append({'date': date, 'nav': nav, 'daily_return': 0.0})
+                continue
+
+            # equal-weight allocation across positions
+            alloc_per_pos = nav / total_positions
+
+            daily_pnl = 0.0
+            for sec, row in longs.iterrows():
+                entry = row['open'] * (1 + SLIPPAGE_PCT)  # buy at open plus slippage
+                exitp = row['close'] * (1 - SLIPPAGE_PCT)
+                shares = alloc_per_pos / entry
+                cost = alloc_per_pos  # approximate capital used
+                pnl = shares * (exitp - entry) - alloc_per_pos * TRANSACTION_COST_PCT
+                daily_pnl += pnl
+                trades.append({'date': date, 'sec': sec, 'side': 'long', 'entry': entry, 'exit': exitp, 'pnl': pnl})
+
+            for sec, row in shorts.iterrows():
+                entry = row['open'] * (1 - SLIPPAGE_PCT)  # sell at open minus slippage
+                exitp = row['close'] * (1 + SLIPPAGE_PCT)
+                shares = alloc_per_pos / entry
+                pnl = shares * (entry - exitp) - alloc_per_pos * TRANSACTION_COST_PCT
+                daily_pnl += pnl
+                trades.append({'date': date, 'sec': sec, 'side': 'short', 'entry': entry, 'exit': exitp, 'pnl': pnl})
+
+            daily_return = daily_pnl / nav
+            nav = nav + daily_pnl
+            nav_hist.append({'date': date, 'nav': nav, 'daily_return': daily_return, 'pnl': daily_pnl, 'n_positions': total_positions})
+        except Exception as e:
+            # never crash the loop; log and continue
+            print(f"Error on {date}: {e}")
+            nav_hist.append({'date': date, 'nav': nav, 'daily_return': 0.0})
+
+    nav_df = pd.DataFrame(nav_hist).set_index('date')
+    trades_df = pd.DataFrame(trades)
+    return nav_df, trades_df
+
+# -------------------------
+# Run and report
+# -------------------------
+nav_df, trades_df = run_backtest(START, END, UNIVERSE, TOP_N)
+
+# Simple performance printout
+nav_df['cum_return'] = nav_df['nav'] / nav_df['nav'].iloc[0] - 1.0
+print("Start NAV:", nav_df['nav'].iloc[0])
+print("End NAV:", nav_df['nav'].iloc[-1])
+print("Total return:", f"{nav_df['cum_return'].iloc[-1]*100:.2f}%")
+print("Days traded:", len(nav_df))
+print("Total trades:", len(trades_df))
+
+# Plot NAV
+plt.figure(figsize=(10,4))
+plt.plot(pd.to_datetime(nav_df.index), nav_df['nav'])
+plt.title("NAV over time")
+plt.xlabel("Date")
+plt.grid(True)
+plt.show()
+
+# Show sample trades
+if not trades_df.empty:
+    display(trades_df.sort_values('pnl', ascending=False).head(10))
