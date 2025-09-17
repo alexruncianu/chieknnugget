@@ -558,3 +558,192 @@ plt.show()
 # Show sample trades
 if not trades_df.empty:
     display(trades_df.sort_values('pnl', ascending=False).head(10))
+
+
+
+
+
+
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# --------------------------
+# INPUT: after_hours_df
+# --------------------------
+# You must have a DataFrame like this:
+#   date        ticker          after_hours_move
+#   2024-01-02  AAPL US Equity   0.025
+#   2024-01-02  MSFT US Equity  -0.012
+#   2024-01-03  TSLA US Equity   0.030
+
+# Example dummy data (replace with your real universe output)
+dates = pd.bdate_range("2024-01-02", "2024-01-10")
+after_hours_df = pd.DataFrame({
+    "date": np.repeat(dates, 3),
+    "ticker": ["AAPL US Equity", "MSFT US Equity", "TSLA US Equity"] * len(dates),
+    "after_hours_move": np.random.normal(0, 0.03, len(dates) * 3)
+})
+
+# --------------------------
+# PARAMETERS
+# --------------------------
+capital = 1_000_000
+slippage = 0.0005
+fee = 0.0005
+
+# --------------------------
+# STEP 1: GET DAILY PRICES
+# --------------------------
+# In bQuant you’d replace this with BQL (PX_OPEN, PX_CLOSE).
+unique_tickers = after_hours_df["ticker"].unique()
+all_dates = after_hours_df["date"].unique()
+
+price_data = {}
+for t in unique_tickers:
+    base = 100 + np.cumsum(np.random.randn(len(all_dates)))
+    df = pd.DataFrame({
+        "date": all_dates,
+        "open": base * (1 + np.random.normal(0, 0.01, len(all_dates))),
+        "close": base * (1 + np.random.normal(0, 0.01, len(all_dates)))
+    })
+    df.set_index("date", inplace=True)
+    price_data[t] = df
+
+# --------------------------
+# STEP 2: BACKTEST LOOP
+# --------------------------
+nav = capital
+nav_hist = []
+trades = []
+
+for d in all_dates:
+    # Use yesterday's signals (lag)
+    prev_day = pd.Timestamp(d) - pd.tseries.offsets.BDay(1)
+    daily_universe = after_hours_df.query("date == @prev_day")
+    if daily_universe.empty:
+        nav_hist.append((d, nav))
+        continue
+
+    signals = dict(zip(
+        daily_universe["ticker"],
+        np.where(daily_universe["after_hours_move"] > 0, 1, -1)
+    ))
+
+    positions = list(signals.keys())
+    if not positions:
+        nav_hist.append((d, nav))
+        continue
+
+    weight = nav / len(positions)
+    daily_pnl = 0
+
+    for t in positions:
+        if t not in price_data or d not in price_data[t].index:
+            continue  # skip if missing data
+        s = signals[t]
+        o = price_data[t].loc[d, "open"]
+        c = price_data[t].loc[d, "close"]
+
+        entry = o * (1 + slippage * s)
+        exitp = c * (1 - slippage * s)
+        shares = weight / entry
+        pnl = s * (exitp - entry) * shares - weight * fee
+        daily_pnl += pnl
+
+        trades.append((d, t, s, entry, exitp, pnl))
+
+    nav += daily_pnl
+    nav_hist.append((d, nav))
+
+# --------------------------
+# STEP 3: RESULTS
+# --------------------------
+nav_df = pd.DataFrame(nav_hist, columns=["date", "nav"]).set_index("date")
+
+print("Start NAV:", capital)
+print("End NAV:", nav_df["nav"].iloc[-1])
+print("Total return: %.2f%%" % ((nav_df["nav"].iloc[-1] / capital - 1) * 100))
+
+plt.plot(nav_df.index, nav_df["nav"])
+plt.title("After-Hours Momentum (Next-Day Trading) NAV")
+plt.grid(True)
+plt.show()
+
+# optional: trades dataframe
+trades_df = pd.DataFrame(trades, columns=["date","ticker","signal","entry","exit","pnl"])
+
+
+
+
+import pandas as pd
+import numpy as np
+
+# --------------------------
+# INPUT DATA
+# --------------------------
+# Example after_hours_df (replace with your screen output)
+dates = pd.bdate_range("2024-01-02", "2024-01-10")
+after_hours_df = pd.DataFrame({
+    "date": np.repeat(dates, 3),
+    "ticker": ["AAPL", "MSFT", "TSLA"] * len(dates),
+    "after_hours_move": np.random.normal(0, 0.03, len(dates)*3)
+})
+
+# Fake open/close prices (replace with real BQL data)
+prices = []
+for t in after_hours_df["ticker"].unique():
+    base = 100 + np.cumsum(np.random.randn(len(dates)))
+    df = pd.DataFrame({
+        "date": dates,
+        "ticker": t,
+        "open": base * (1 + np.random.normal(0,0.01,len(dates))),
+        "close": base * (1 + np.random.normal(0,0.01,len(dates)))
+    })
+    prices.append(df)
+prices_df = pd.concat(prices)
+
+# --------------------------
+# BACKTEST
+# --------------------------
+capital = 1_000_000
+nav = capital
+nav_hist = []
+
+for d in dates[1:]:  # start from 2nd day (need yesterday's signals)
+    # yesterday's movers
+    prev = after_hours_df[after_hours_df["date"] == d - pd.tseries.offsets.BDay(1)]
+    if prev.empty:
+        nav_hist.append((d, nav))
+        continue
+
+    # signals
+    prev["signal"] = np.where(prev["after_hours_move"] > 0, 1, -1)
+
+    # today’s prices
+    today = prices_df[prices_df["date"] == d]
+    df = prev.merge(today, on="ticker", how="inner")
+
+    if df.empty:
+        nav_hist.append((d, nav))
+        continue
+
+    weight = nav / len(df)
+    df["entry"] = df["open"]
+    df["exit"] = df["close"]
+    df["pnl"] = df["signal"] * (df["exit"] - df["entry"]) * (weight / df["entry"])
+
+    nav += df["pnl"].sum()
+    nav_hist.append((d, nav))
+
+# --------------------------
+# RESULTS
+# --------------------------
+nav_df = pd.DataFrame(nav_hist, columns=["date","nav"]).set_index("date")
+print("Start NAV:", capital)
+print("End NAV:", nav_df.iloc[-1,0])
+print("Return %.2f%%" % ((nav_df.iloc[-1,0]/capital - 1)*100))
+
+nav_df.plot(title="After Hours Momentum NAV", grid=True)
