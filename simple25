@@ -91,3 +91,90 @@ def update_charts(selected_ticker):
 
 # Run inline in Jupyter
 app.run_server(mode="inline")
+
+
+
+
+----
+
+
+import pandas as pd
+import plotly.express as px
+
+# ----------------------------------------------------------------------
+# Example dataframe (replace this with your df)
+# ----------------------------------------------------------------------
+data = {
+    "date": ["2025-09-23","2025-09-23","2025-09-24","2025-09-24","2025-09-24","2025-09-25"],
+    "ticker": ["XXINF","YYDEF","ZZINF","AAINF","BBDEF","CCXYZ"],
+    "client": ["ClientA","ClientB","ClientA","ClientC","ClientB","ClientA"],
+    "position_size": [150,200,160,120,130,90]
+}
+df = pd.DataFrame(data)
+df["date"] = pd.to_datetime(df["date"])
+
+# ----------------------------------------------------------------------
+# Define suffix → theme mapping
+# ----------------------------------------------------------------------
+suffix_map = {
+    "INF": "Infrastructure",
+    "DEF": "Defence"
+}
+
+def map_theme(ticker):
+    ticker = str(ticker).upper()  # make case-insensitive
+    for suffix, theme in suffix_map.items():
+        if ticker.endswith(suffix):
+            return theme
+    return "Other"
+
+df["theme"] = df["ticker"].apply(map_theme)
+
+# ----------------------------------------------------------------------
+# Aggregations
+# ----------------------------------------------------------------------
+# Positioning over time (by theme)
+pos_over_time = df.groupby(["date","theme"])["position_size"].sum().reset_index()
+
+# Theme totals
+theme_totals = df.groupby("theme")["position_size"].sum().reset_index()
+
+# Client breakdown by theme
+client_theme = df.groupby(["client","theme"])["position_size"].sum().reset_index()
+
+# ----------------------------------------------------------------------
+# Visualisations
+# ----------------------------------------------------------------------
+
+# 1. Positioning over time by theme
+fig1 = px.line(
+    pos_over_time,
+    x="date",
+    y="position_size",
+    color="theme",
+    markers=True,
+    title="Positioning Over Time by Theme"
+)
+fig1.show()
+
+# 2. Total theme distribution
+fig2 = px.bar(
+    theme_totals,
+    x="theme",
+    y="position_size",
+    text="position_size",
+    title="Theme Distribution Across All Baskets"
+)
+fig2.update_traces(textposition="outside")
+fig2.show()
+
+# 3. Client breakdown by theme
+fig3 = px.bar(
+    client_theme,
+    x="client",
+    y="position_size",
+    color="theme",
+    barmode="group",
+    title="Client Breakdown by Theme"
+)
+fig3.show()
