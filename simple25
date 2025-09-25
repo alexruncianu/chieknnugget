@@ -178,3 +178,86 @@ fig3 = px.bar(
     title="Client Breakdown by Theme"
 )
 fig3.show()
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# -------------------
+# Load data
+# -------------------
+df = pd.read_csv("your_file.csv")
+
+# Assuming columns: add_date, ticker, t+1, t+2, ..., t+n
+meta_cols = ["add_date", "ticker"]
+price_cols = [c for c in df.columns if c not in meta_cols]
+
+# -------------------
+# Normalize to returns relative to t+1
+# -------------------
+df_perf = df.copy()
+P0 = df[price_cols[0]]  # first price = t+1
+for c in price_cols:
+    df_perf[c] = (df[c] / P0) - 1
+
+# -------------------
+# Fixed horizon analysis (approx 21 trading days per month)
+# -------------------
+months_map = {
+    "1m": 21,
+    "2m": 42,
+    "3m": 63,
+    "4m": 84,
+    "5m": 105,
+    "6m": 126
+}
+
+results = []
+
+for label, day in months_map.items():
+    col_name = f"t+{day}"
+    if col_name in df_perf.columns:
+        tmp = df_perf[["ticker", col_name]].copy()
+        tmp.rename(columns={col_name: "return"}, inplace=True)
+        tmp["horizon"] = label
+        results.append(tmp)
+
+perf_long = pd.concat(results)
+
+# Mean return per horizon
+mean_perf = perf_long.groupby("horizon")["return"].mean()
+
+# -------------------
+# Full average performance curve
+# -------------------
+avg_curve = df_perf[price_cols].mean(axis=0)
+
+# -------------------
+# Plotting
+# -------------------
+
+# 1. Snapshot mean returns bar chart
+plt.figure(figsize=(8,5))
+mean_perf.plot(kind="bar")
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Average Return")
+plt.title("Average Return at Fixed Horizons")
+plt.show()
+
+# 2. Distribution boxplots
+plt.figure(figsize=(8,5))
+perf_long.boxplot(by="horizon", column="return", grid=False)
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Return")
+plt.title("Return Distribution by Horizon")
+plt.suptitle("")  # remove default pandas title
+plt.show()
+
+# 3. Full performance curve (average cumulative return path)
+plt.figure(figsize=(10,6))
+avg_curve.plot()
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Average Return")
+plt.xlabel("Days Since Add Date")
+plt.title("Average Performance Curve Across All Names")
+plt.show()
