@@ -1,0 +1,93 @@
+# Install dependencies if not already installed:
+# !pip install jupyter-dash plotly dash
+
+import pandas as pd
+import plotly.express as px
+from jupyter_dash import JupyterDash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+
+# ----------------------------------------------------------------------
+# Example dataframe (replace this with your df)
+# ----------------------------------------------------------------------
+data = {
+    "date": ["2025-09-23","2025-09-23","2025-09-23","2025-09-24","2025-09-24","2025-09-24"],
+    "ticker": ["TSLA","AAPL","MSFT","TSLA","AAPL","MSFT"],
+    "client": ["ClientA","ClientB","ClientC","ClientA","ClientB","ClientC"],
+    "position_size": [150,200,180,160,130,210],
+    "theme": ["EV","Tech","Tech","EV","Tech","Tech"]
+}
+df = pd.DataFrame(data)
+df["date"] = pd.to_datetime(df["date"])
+
+# ----------------------------------------------------------------------
+# Option 1: Quick inline charts (no Dash, just Plotly)
+# ----------------------------------------------------------------------
+print("👉 Quick inline charts below")
+
+# Positioning over time by ticker
+pos_over_time = df.groupby(["date","ticker"])["position_size"].sum().reset_index()
+fig1 = px.line(pos_over_time, x="date", y="position_size", color="ticker", markers=True,
+               title="Total Position Size Over Time by Ticker")
+fig1.show()
+
+# Theme distribution across all tickers
+theme_dist = df.groupby("theme")["position_size"].sum().reset_index()
+fig2 = px.bar(theme_dist, x="theme", y="position_size", text="position_size",
+              title="Theme Distribution Across All Tickers")
+fig2.update_traces(textposition="outside")
+fig2.show()
+
+# ----------------------------------------------------------------------
+# Option 2: Full interactive dashboard (with dropdown)
+# ----------------------------------------------------------------------
+print("👉 Launching full dashboard inline")
+
+app = JupyterDash(__name__)
+app.title = "Client Positioning Dashboard"
+
+app.layout = html.Div([
+    html.H2("Client Positioning Dashboard"),
+
+    dcc.Dropdown(
+        id="ticker-dropdown",
+        options=[{"label": t, "value": t} for t in sorted(df["ticker"].unique())],
+        value=sorted(df["ticker"].unique())[0],
+        clearable=False
+    ),
+
+    dcc.Graph(id="position-over-time"),
+    dcc.Graph(id="theme-distribution"),
+    dcc.Graph(id="client-breakdown")
+])
+
+@app.callback(
+    [Output("position-over-time", "figure"),
+     Output("theme-distribution", "figure"),
+     Output("client-breakdown", "figure")],
+    [Input("ticker-dropdown", "value")]
+)
+def update_charts(selected_ticker):
+    dff = df[df["ticker"] == selected_ticker]
+
+    # 1. Positions over time
+    pos_time = dff.groupby("date")["position_size"].sum().reset_index()
+    fig_time = px.line(pos_time, x="date", y="position_size", markers=True,
+                       title=f"Positions Over Time: {selected_ticker}")
+
+    # 2. Theme distribution
+    theme_dist = dff.groupby("theme")["position_size"].sum().reset_index()
+    fig_theme = px.bar(theme_dist, x="theme", y="position_size", text="position_size",
+                       title=f"Theme Distribution: {selected_ticker}")
+    fig_theme.update_traces(textposition="outside")
+
+    # 3. Client breakdown
+    client_dist = dff.groupby("client")["position_size"].sum().reset_index()
+    fig_client = px.bar(client_dist, x="client", y="position_size", text="position_size",
+                        title=f"Client Breakdown: {selected_ticker}")
+    fig_client.update_traces(textposition="outside")
+
+    return fig_time, fig_theme, fig_client
+
+# Run inline in Jupyter
+app.run_server(mode="inline")
