@@ -197,3 +197,22 @@ plt.xlabel("Days Since Add Date (t0)")
 plt.title("All Tickers Performance Curves (Stacked)")
 plt.legend()
 plt.show()
+
+Fund,Ticker/ISIN,Underlying Index,AuM
+Xtrackers MSCI World UCITS ETF 1C,IE00BJ0KDQ92,MSCI World,€20.63B
+Xtrackers S&P 500 UCITS ETF 4C,IE000Z9SJA06,S&P 500,€1.53B
+Xtrackers Artificial Intelligence & Big Data UCITS ETF 1C,IE00BGV5VN51,Nasdaq Global AI & Big Data Index,€5.50B
+Xtrackers II EUR Overnight Rate Swap UCITS ETF 1C,LU0290358497,EUR Overnight Rate Swap Index,€18.37M
+Xtrackers DAX UCITS ETF 1C Core Direct,XDAX,DAX,€6.48B
+Xtrackers Euro Stoxx 50 UCITS ETF 1D Core,LU0274211217,EURO STOXX 50,€9.94B
+Xtrackers Artificial Intelligence & Big Data ETF (US),XAIX,Nasdaq Global AI & Big Data Index,Part of $21B suite
+Xtrackers USD High Yield BB-B ex Financials ETF,HYLB,ICE BofA BB-B Non-Financials HY Index,$3.53B
+Xtrackers US National Critical Technologies ETF,CRTC,Solactive Whitney US Critical Technologies Index,N/A
+Xtrackers USA Net Zero Pathway Paris Aligned UCITS ETF 1C ESG,N/A,Solactive-ISS ESG USA Net Zero Pathway Index,N/A
+Xtrackers Europe Net Zero Pathway Paris Aligned UCITS ETF 1C ESG,N/A,Solactive-ISS ESG Europe Net Zero Pathway Index,N/A
+Xtrackers Japan Net Zero Pathway Paris Aligned UCITS ETF 1C ESG,N/A,Solactive-ISS ESG Japan Net Zero Pathway Index,N/A
+Xtrackers Emerging Markets Net Zero Pathway Paris Aligned UCITS ETF 1C ESG,N/A,Solactive-ISS ESG EM Net Zero Pathway Index,N/A
+Xtrackers MSCI China A ESG Screened Swap UCITS ETF 1C,LU2469465822,MSCI China A Inclusion Select ESG Screened Index,€5.13M
+Xtrackers CSI300 Swap UCITS ETF 1C,LU0779800910,CSI 300 Swap Index,€2.05B
+Xtrackers Nikkei 225 UCITS ETF 1D,XDJP,Nikkei 225,€1.60B
+Xtrackers MSCI China UCITS ETF 1C,N/A,MSCI China,€1.88B
