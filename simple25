@@ -347,3 +347,102 @@ plt.ylabel("Average Return")
 plt.xlabel("Days Since Add Date (t0)")
 plt.title("Average Performance Curve Across All Names")
 plt.show()
+
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# -------------------
+# Load data
+# -------------------
+df = pd.read_csv("your_file.csv")
+
+# -------------------
+# Identify columns
+# -------------------
+bbg_col = df.columns[6]   # bbg_ticker
+date_col = df.columns[7]  # add_date
+price_cols = df.columns[8:].tolist()
+
+# -------------------
+# Normalize prices into returns
+# -------------------
+df_perf = df.copy()
+P0 = df[price_cols[0]]  # price at t0 (add date)
+
+for c in price_cols:
+    df_perf[c] = (df[c] / P0) - 1
+
+# -------------------
+# Horizon mapping (21 trading days ~ 1 month)
+# -------------------
+months_map = {
+    "1m": 21,
+    "2m": 42,
+    "3m": 63,
+    "4m": 84,
+    "5m": 105,
+    "6m": 126
+}
+
+results = []
+
+for label, day in months_map.items():
+    if day < len(price_cols):  # only if that horizon exists
+        col_name = price_cols[day]
+        tmp = df_perf[[bbg_col, date_col, col_name]].copy()
+        tmp.rename(columns={col_name: "return"}, inplace=True)
+        tmp["horizon"] = label
+        results.append(tmp)
+
+perf_long = pd.concat(results)
+
+# -------------------
+# Analysis
+# -------------------
+
+# 1. Mean return by horizon (all tickers pooled)
+mean_perf = perf_long.groupby("horizon")["return"].mean()
+
+# 2. Mean return by ticker
+mean_by_ticker = perf_long.groupby([bbg_col, "horizon"])["return"].mean().unstack()
+
+# 3. Mean return by add_date
+mean_by_date = perf_long.groupby([date_col, "horizon"])["return"].mean().unstack()
+
+# -------------------
+# Full average performance curve
+# -------------------
+avg_curve = df_perf[price_cols].mean(axis=0)
+
+# -------------------
+# Plotting
+# -------------------
+
+# 1. Bar chart: mean return by horizon (all tickers)
+plt.figure(figsize=(8,5))
+mean_perf.plot(kind="bar")
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Average Return")
+plt.title("Average Return at Fixed Horizons")
+plt.show()
+
+# 2. Boxplot: return distribution by horizon
+plt.figure(figsize=(8,5))
+perf_long.boxplot(by="horizon", column="return", grid=False)
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Return")
+plt.title("Return Distribution by Horizon")
+plt.suptitle("")
+plt.show()
+
+# 3. Full average return curve
+plt.figure(figsize=(10,6))
+avg_curve.plot()
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Average Return")
+plt.xlabel("Days Since Add Date (t0)")
+plt.title("Average Performance Curve Across All Names")
+plt.show()
+
