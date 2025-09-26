@@ -547,3 +547,65 @@ plt.ylabel("Average Return")
 plt.xlabel("Days Since Add Date (t0)")
 plt.title("Average Performance Curve Across All Names")
 plt.show()
+
+
+-
+---
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# -------------------
+# Load data
+# -------------------
+df = pd.read_csv("your_file.csv")
+
+# -------------------
+# Identify columns
+# -------------------
+bbg_col = df.columns[6]   # bbg_ticker
+date_col = df.columns[7]  # add_date
+price_cols = df.columns[8:].tolist()
+
+# -------------------
+# Normalize prices into returns
+# -------------------
+df_perf = df.copy()
+P0 = df[price_cols[0]]  # price at t0 (add date)
+
+for c in price_cols:
+    df_perf[c] = (df[c] / P0) - 1
+
+# -------------------
+# Melt into long format for plotting
+# -------------------
+perf_long_curve = df_perf.melt(
+    id_vars=[bbg_col, date_col],
+    value_vars=price_cols,
+    var_name="day",
+    value_name="return"
+)
+
+# Convert day column (Unnamed:8 = t0, Unnamed:9 = t+1, etc) into integer offsets
+perf_long_curve["day_num"] = perf_long_curve["day"].str.extract(r'(\d+)').astype(int)
+perf_long_curve["day_num"] = perf_long_curve["day_num"] - perf_long_curve["day_num"].min()  # start at 0
+
+# -------------------
+# Plot: performance per ticker
+# -------------------
+tickers = perf_long_curve[bbg_col].unique()
+
+for ticker in tickers:
+    subset = perf_long_curve[perf_long_curve[bbg_col] == ticker]
+    plt.figure(figsize=(10,6))
+    for add_date in subset[date_col].unique():
+        sub2 = subset[subset[date_col] == add_date]
+        plt.plot(sub2["day_num"], sub2["return"], label=f"{ticker} ({add_date})")
+    
+    plt.axhline(0, color="black", linestyle="--", linewidth=1)
+    plt.ylabel("Return")
+    plt.xlabel("Days Since Add Date")
+    plt.title(f"Performance for {ticker}")
+    plt.legend()
+    plt.show()
