@@ -83,3 +83,117 @@ plt.ylabel("Average Return")
 plt.xlabel("Days Since Add Date (t0)")
 plt.title("Average Performance Curve Across All Names")
 plt.show()
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# -------------------
+# Load data
+# -------------------
+df = pd.read_csv("your_file.csv")
+
+# -------------------
+# Identify columns
+# -------------------
+bbg_col = df.columns[6]   # bbg_ticker
+date_col = df.columns[7]  # add_date
+price_cols = df.columns[8:].tolist()
+
+# -------------------
+# Normalize prices into returns
+# -------------------
+df_perf = df.copy()
+P0 = df[price_cols[0]]  # price at t0 (add date)
+
+for c in price_cols:
+    df_perf[c] = (df[c] / P0) - 1
+
+# -------------------
+# Horizon mapping (approx 21 trading days ~ 1 month)
+# -------------------
+months_map = {
+    "1m": 21,
+    "2m": 42,
+    "3m": 63,
+    "4m": 84,
+    "5m": 105,
+    "6m": 126
+}
+
+results = []
+
+for label, day in months_map.items():
+    if day < len(price_cols):  # only if horizon exists
+        col_name = price_cols[day]
+        tmp = df_perf[[bbg_col, date_col, col_name]].copy()
+        tmp.rename(columns={col_name: "return"}, inplace=True)
+        tmp["horizon"] = label
+        results.append(tmp)
+
+perf_long = pd.concat(results)
+
+# -------------------
+# Average performance curve
+# -------------------
+avg_curve = df_perf[price_cols].mean(axis=0)
+day_nums = list(range(len(price_cols)))  # 0,1,2,...
+avg_curve.index = day_nums
+
+plt.figure(figsize=(10,6))
+avg_curve.plot()
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Average Return")
+plt.xlabel("Days Since Add Date (t0)")
+plt.title("Average Performance Curve Across All Names")
+plt.show()
+
+# -------------------
+# Boxplot with labeled outliers
+# -------------------
+plt.figure(figsize=(10,6))
+sns.boxplot(x="horizon", y="return", data=perf_long, showfliers=True)
+sns.stripplot(x="horizon", y="return", data=perf_long, color="black", size=3, alpha=0.5)
+
+# Label outliers (top & bottom 3 per horizon)
+for horizon in perf_long["horizon"].unique():
+    sub = perf_long[perf_long["horizon"] == horizon]
+    top = sub.nlargest(3, "return")
+    bottom = sub.nsmallest(3, "return")
+    extremes = pd.concat([top, bottom])
+    x_pos = list(perf_long["horizon"].unique()).tolist().index(horizon)
+    for _, row in extremes.iterrows():
+        plt.text(
+            x=x_pos,
+            y=row["return"],
+            s=row[bbg_col],
+            fontsize=8,
+            ha="center",
+            va="bottom" if row["return"] > 0 else "top"
+        )
+
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Return")
+plt.title("Return Distribution by Horizon (with Outliers Labeled)")
+plt.show()
+
+# -------------------
+# Stacked plot of all tickers' curves
+# -------------------
+plt.figure(figsize=(12,7))
+
+for _, row in df_perf.iterrows():
+    returns = row[price_cols].values
+    returns = (returns / returns[0]) - 1  # normalize
+    plt.plot(day_nums, returns, alpha=0.3, linewidth=1, color="gray")
+
+# Overlay average curve
+plt.plot(day_nums, avg_curve, color="red", linewidth=2, label="Average")
+
+plt.axhline(0, color="black", linestyle="--", linewidth=1)
+plt.ylabel("Return")
+plt.xlabel("Days Since Add Date (t0)")
+plt.title("All Tickers Performance Curves (Stacked)")
+plt.legend()
+plt.show()
