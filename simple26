@@ -442,3 +442,86 @@ if portfolio_net_df is not None:
 print("Done. Saved portfolio_curves_gross_by_trade_date.csv (and net file if applicable).")
 
 
+
+----
+
+
+import pandas as pd
+
+# ------------------------------
+# Simplified fast entry criteria
+# (based on MSCI/FTSE published methodology — approximate, not official)
+# ------------------------------
+
+# MSCI EM / World fast entry thresholds (USD m)
+MSCI_LARGE_CAP_MIN = 2600   # ~USD 2.6bn for EM (varies by region)
+MSCI_STANDARD_MIN  = 1300   # ~USD 1.3bn (for Standard Index, developed markets)
+MSCI_MIN_FREEFLOAT = 0.15   # 15% free float minimum
+
+# FTSE GEIS fast entry thresholds (USD m)
+FTSE_ALLWORLD_MIN  = 1600   # ~USD 1.6bn
+FTSE_MIN_FREEFLOAT = 0.15
+
+# ------------------------------
+# Screening function
+# ------------------------------
+
+def check_fast_entry(name, market_cap_usd, free_float_pct, country, avg_daily_value_usd=None):
+    """
+    Parameters
+    ----------
+    name : str
+        IPO name
+    market_cap_usd : float
+        Expected full market cap at IPO (USD)
+    free_float_pct : float
+        Free float percentage (0-1)
+    country : str
+        Listing country (used for classification, not detailed here)
+    avg_daily_value_usd : float
+        Optional: expected ADV for liquidity check
+    
+    Returns
+    -------
+    dict with MSCI and FTSE fast entry checks
+    """
+    results = {}
+
+    # MSCI
+    ff_mcap = market_cap_usd * free_float_pct
+    msci_pass = (
+        free_float_pct >= MSCI_MIN_FREEFLOAT and
+        (ff_mcap >= MSCI_LARGE_CAP_MIN or ff_mcap >= MSCI_STANDARD_MIN)
+    )
+    results["MSCI_fast_entry"] = msci_pass
+    results["MSCI_ff_mcap_usd"] = round(ff_mcap, 1)
+
+    # FTSE
+    ftse_pass = (
+        free_float_pct >= FTSE_MIN_FREEFLOAT and
+        ff_mcap >= FTSE_ALLWORLD_MIN
+    )
+    results["FTSE_fast_entry"] = ftse_pass
+    results["FTSE_ff_mcap_usd"] = round(ff_mcap, 1)
+
+    # Liquidity (optional)
+    if avg_daily_value_usd is not None:
+        results["Liquidity_check"] = avg_daily_value_usd > 1e6  # crude rule of thumb
+    
+    results["IPO_name"] = name
+    results["Country"] = country
+    return results
+
+# ------------------------------
+# Example usage
+# ------------------------------
+
+ipo_list = [
+    {"name": "ExampleTech", "mcap": 5000, "ff": 0.25, "country": "US", "adv": 50e6},
+    {"name": "SmallBank",   "mcap": 800,  "ff": 0.30, "country": "UK", "adv": 5e6},
+    {"name": "FrontierCo",  "mcap": 2000, "ff": 0.10, "country": "India", "adv": 2e6},
+]
+
+results = [check_fast_entry(i["name"], i["mcap"], i["ff"], i["country"], i["adv"]) for i in ipo_list]
+df = pd.DataFrame(results)
+print(df)
