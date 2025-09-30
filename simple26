@@ -216,3 +216,62 @@ Xtrackers MSCI China A ESG Screened Swap UCITS ETF 1C,LU2469465822,MSCI China A 
 Xtrackers CSI300 Swap UCITS ETF 1C,LU0779800910,CSI 300 Swap Index,€2.05B
 Xtrackers Nikkei 225 UCITS ETF 1D,XDJP,Nikkei 225,€1.60B
 Xtrackers MSCI China UCITS ETF 1C,N/A,MSCI China,€1.88B
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# === Load your CSV ===
+df = pd.read_csv("your_file.csv")
+
+# Expected columns: ['side', 'quantity', 'bbg_ticker', 'add_date', price columns...]
+price_cols = df.columns[4:]  # first 4 cols are meta, rest are Unnamed:8, Unnamed:9, ...
+
+# Compute returns relative to trade date
+returns = (df[price_cols].T / df[price_cols].iloc[:,0].values).T - 1
+returns["bbg_ticker"] = df["bbg_ticker"]
+returns["add_date"] = pd.to_datetime(df["add_date"])
+returns["side"] = df["side"].str.lower()
+returns["quantity"] = df["quantity"]
+
+# Map side → +1 (long), -1 (short)
+returns["weight"] = returns["quantity"] * returns["side"].map({"long": 1, "short": -1})
+
+# === Group by trade date ===
+portfolio_curves = {}
+
+for trade_date, group in returns.groupby("add_date"):
+    # Weighted average across tickers traded that day
+    weighted = (group[price_cols].T * group["weight"].values).T
+    portfolio_curve = weighted.sum(axis=0) / group["quantity"].sum()
+    portfolio_curves[trade_date] = portfolio_curve
+
+# Convert to DataFrame
+portfolio_df = pd.DataFrame(portfolio_curves)
+
+# Average performance across all trade dates
+average_curve = portfolio_df.mean(axis=1)
+
+# === Relabel X-axis as months (1m, 2m, …) ===
+days = range(len(price_cols))
+months = [f"{i}m" for i in range(1,7)]
+month_positions = [21*i for i in range(1,7)]  # ~21 trading days = 1m
+
+# === Plot portfolio curves ===
+plt.figure(figsize=(12,7))
+
+# Plot each trade date curve
+for trade_date in portfolio_df.columns:
+    plt.plot(days, portfolio_df[trade_date].values, alpha=0.4, label=str(trade_date.date()))
+
+# Plot average curve
+plt.plot(days, average_curve.values, color="black", linewidth=2, label="Average")
+
+plt.axhline(0, color="black", linewidth=0.8)
+plt.xticks(month_positions, months)
+plt.xlabel("Time since trade date")
+plt.ylabel("Performance vs. trade date (%)")
+plt.title("Portfolio Performance by Trade Date")
+plt.legend(loc="best", fontsize=8)
+plt.grid(True)
+plt.show()
