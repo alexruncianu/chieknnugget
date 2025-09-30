@@ -275,3 +275,170 @@ plt.title("Portfolio Performance by Trade Date")
 plt.legend(loc="best", fontsize=8)
 plt.grid(True)
 plt.show()
+
+
+
+---
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ---------- load ----------
+df = pd.read_csv("your_file.csv")   # <-- change filename if needed
+
+# ---------- find core columns (case-insensitive) ----------
+cols_lower = {c.lower(): c for c in df.columns}
+
+def find_col(names):
+    for n in names:
+        if n.lower() in cols_lower:
+            return cols_lower[n.lower()]
+    return None
+
+side_col   = find_col(['side'])
+qty_col    = find_col(['quantity','qty','size'])
+ticker_col = find_col(['bbg_ticker','ticker','symbol'])
+date_col   = find_col(['add_date','trade_date','date'])
+
+if not all([side_col, qty_col, ticker_col, date_col]):
+    missing = [n for n,c in [('side',side_col),('quantity',qty_col),('bbg_ticker',ticker_col),('add_date',date_col)] if c is None]
+    raise ValueError(f"Could not find required columns in CSV: {missing}. Column names are case-insensitive; adapt names or rename columns.")
+
+# ---------- identify price columns (everything else) ----------
+meta_cols = {side_col, qty_col, ticker_col, date_col}
+price_cols = [c for c in df.columns if c not in meta_cols]
+if len(price_cols) == 0:
+    raise ValueError("No price columns found. Price columns should be all columns after the meta columns.")
+
+# ---------- prepare numeric price matrix ----------
+prices = df[price_cols].apply(pd.to_numeric, errors='coerce').to_numpy(dtype=float)   # shape (n_rows, n_days)
+n_days = prices.shape[1]
+day_idx = np.arange(n_days)   # 0,1,2,...
+
+# ---------- compute row-wise returns relative to t0 (first price column) ----------
+P0 = prices[:, 0].astype(float)
+valid = np.isfinite(P0) & (P0 != 0)
+returns = np.full_like(prices, np.nan, dtype=float)
+returns[valid, :] = prices[valid, :] / P0[valid, None] - 1.0
+
+# ---------- meta dataframe ----------
+meta = pd.DataFrame({
+    'side_raw': df[side_col].astype(str),
+    'quantity': pd.to_numeric(df[qty_col], errors='coerce').fillna(1.0),
+    'ticker': df[ticker_col].astype(str),
+    'trade_date': pd.to_datetime(df[date_col], errors='coerce')
+})
+
+# drop rows with invalid trade_date
+meta = meta.reset_index(drop=False)  # keep original row index in column 'index'
+meta.rename(columns={'index':'orig_index'}, inplace=True)
+
+# ---------- map sides Buy/Sell to +1/-1 ----------
+meta['side_norm'] = meta['side_raw'].str.strip().str.lower().map({'buy': 1, 'sell': -1})
+# Any unmapped side -> raise warning and drop those rows
+unmapped = meta[meta['side_norm'].isna()]
+if not unmapped.empty:
+    print("Warning: some 'side' values were not 'Buy' or 'Sell' (case-insensitive). These rows will be dropped:")
+    print(unmapped[['orig_index','side_raw']].head())
+    meta = meta[meta['side_norm'].notna()]
+
+# build signed weights = quantity * sign
+meta['signed_weight'] = meta['quantity'] * meta['side_norm']
+
+# ---------- group by trade_date and compute portfolio curve per date ----------
+portfolio_gross = {}   # gross-normalized (divide by sum abs weights present that day)
+portfolio_net   = {}   # net-normalized (divide by sum signed weights) when possible
+
+# Use the original row numbers to pick rows from returns matrix
+for trade_date, group in meta.groupby('trade_date', sort=True):
+    idxs = group['orig_index'].to_numpy(dtype=int)   # indices into returns matrix
+    group_returns = returns[idxs, :]                 # shape (n_group, n_days)
+    group_weights = group['signed_weight'].to_numpy(dtype=float)  # length n_group
+
+    # skip groups with no valid returns (all NaN)
+    if np.isnan(group_returns).all():
+        continue
+
+    # For each day compute weighted sum ignoring NaNs:
+    # numerator_day = sum_i ( weight_i * return_{i,day} ) where return not NaN
+    # denom_gross_day = sum_i ( |weight_i| ) where return not NaN
+    mask_valid = ~np.isnan(group_returns)   # True where a given ticker has data that day
+    weighted_vals = np.where(mask_valid, group_returns * group_weights[:, None], 0.0)
+    numerator = weighted_vals.sum(axis=0)   # length n_days
+
+    # per-day denom: sum of abs(weights) for tickers present that day
+    denom_gross_per_day = (mask_valid * np.abs(group_weights)[:, None]).sum(axis=0)  # length n_days
+
+    # build gross-normalized portfolio curve (per day)
+    pg = np.full(n_days, np.nan)
+    ok = denom_gross_per_day != 0
+    pg[ok] = numerator[ok] / denom_gross_per_day[ok]
+
+    # net-normalized (divide by sum of signed weights) if sum != 0
+    denom_net = group_weights.sum()
+    pn = None
+    if denom_net != 0:
+        pn = numerator / denom_net   # note: if some tickers missing on a day, denominator is constant net weight but numerator uses available tickers
+
+    portfolio_gross[pd.to_datetime(trade_date)] = pg
+    if pn is not None:
+        portfolio_net[pd.to_datetime(trade_date)] = pn
+
+# ---------- DataFrames (index = day offsets) ----------
+portfolio_gross_df = pd.DataFrame(portfolio_gross, index=day_idx).sort_index(axis=1)
+portfolio_net_df   = pd.DataFrame(portfolio_net, index=day_idx) if portfolio_net else None
+
+if portfolio_gross_df.empty:
+    raise ValueError("No portfolio curves were produced (empty result). Check your file and that trade dates / price columns are correct.")
+
+# ---------- average curves ----------
+avg_gross = portfolio_gross_df.mean(axis=1, skipna=True)
+avg_net = portfolio_net_df.mean(axis=1, skipna=True) if (portfolio_net_df is not None and not portfolio_net_df.empty) else None
+
+# ---------- plotting (daily x-axis) ----------
+plt.figure(figsize=(13,8))
+
+# plot each trade-date curve (light)
+max_legend = 30  # to avoid overly large legends; show at most this many in legend
+legend_labels = []
+for i, col in enumerate(portfolio_gross_df.columns):
+    y = portfolio_gross_df[col].values
+    plt.plot(day_idx, y, alpha=0.25, linewidth=1, color='gray')
+    if i < max_legend:
+        legend_labels.append(str(col.date()))
+# overlay average gross-normalized (bold)
+plt.plot(day_idx, avg_gross.values, color='black', linewidth=2.5, label='Avg (gross-normalized)')
+# overlay avg net if available
+if avg_net is not None:
+    plt.plot(day_idx, avg_net.values, color='red', linewidth=1.5, linestyle='--', label='Avg (net-normalized)')
+
+plt.axhline(0, color='black', linestyle='--', linewidth=0.8)
+plt.xlabel('Days since trade date (t0)')
+plt.ylabel('Return (vs t0)')
+plt.title('Portfolio returns by trade date (each line = trades executed that date)')
+plt.grid(True)
+
+# build legend: show only the average + up to N trade-dates to avoid clutter
+handles, labels = plt.gca().get_legend_handles_labels()
+# manually add a sample of trade dates (optional)
+if len(portfolio_gross_df.columns) <= max_legend:
+    # show all trade-date names in legend (may be many)
+    plt.legend()
+else:
+    # show only avg lines in legend + note
+    plt.legend(handles=handles, labels=labels)
+    plt.text(0.99, 0.02, f"Plotted {len(portfolio_gross_df.columns)} trade dates; individual dates shown as faint gray lines.",
+             transform=plt.gca().transAxes, ha='right', va='bottom', fontsize=9, alpha=0.8)
+
+plt.show()
+
+# ---------- optional: save portfolio curves to CSV ----------
+portfolio_gross_df.to_csv("portfolio_curves_gross_by_trade_date.csv", index_label="day_offset")
+if portfolio_net_df is not None:
+    portfolio_net_df.to_csv("portfolio_curves_net_by_trade_date.csv", index_label="day_offset")
+
+print("Done. Saved portfolio_curves_gross_by_trade_date.csv (and net file if applicable).")
+
+
