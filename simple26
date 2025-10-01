@@ -525,3 +525,151 @@ ipo_list = [
 results = [check_fast_entry(i["name"], i["mcap"], i["ff"], i["country"], i["adv"]) for i in ipo_list]
 df = pd.DataFrame(results)
 print(df)
+
+
+----
+
+# --- IPO Fast Entry Analyzer for FTSE GEIS and MSCI GIMI ---
+# Run this cell in a Jupyter Notebook
+
+from typing import Dict, Any
+import pandas as pd
+
+class IndexParams:
+    def __init__(self,
+                 name: str,
+                 min_fmc: float,
+                 min_investable_cap: float,
+                 max_rank: int,
+                 require_liquidity: bool = True,
+                 min_turnover: float = None,
+                 min_trade_frequency: float = None,
+                 require_free_float: float = 0.15,
+                 require_foreign_room: float = 0.15):
+        self.name = name
+        self.min_fmc = min_fmc
+        self.min_investable_cap = min_investable_cap
+        self.max_rank = max_rank
+        self.require_liquidity = require_liquidity
+        self.min_turnover = min_turnover
+        self.min_trade_frequency = min_trade_frequency
+        self.require_free_float = require_free_float
+        self.require_foreign_room = require_foreign_room
+
+class IPOCandidate:
+    def __init__(self, offering_shares: float,
+                 first_day_close_price: float,
+                 full_market_cap: float,
+                 free_float_ratio: float,
+                 rank: int,
+                 turnover: float = None,
+                 trade_freq: float = None,
+                 foreign_room: float = None):
+        self.offering_shares = offering_shares
+        self.first_day_close_price = first_day_close_price
+        self.full_market_cap = full_market_cap
+        self.free_float_ratio = free_float_ratio
+        self.rank = rank
+        self.turnover = turnover
+        self.trade_freq = trade_freq
+        self.foreign_room = foreign_room
+
+def check_fast_entry(ipoc: IPOCandidate, params: IndexParams) -> Dict[str, Any]:
+    results = {}
+    results['Index'] = params.name
+
+    # FMC (Fast IPO Market Cap)
+    fmc = ipoc.offering_shares * ipoc.first_day_close_price
+    results['FMC'] = fmc
+    results['Pass FMC'] = fmc >= params.min_fmc
+
+    # Rank
+    results['Rank'] = ipoc.rank
+    results['Pass Rank'] = (ipoc.rank <= params.max_rank)
+
+    # Investable cap
+    investable_cap = ipoc.full_market_cap * ipoc.free_float_ratio
+    results['Investable Cap'] = investable_cap
+    results['Pass Investable'] = investable_cap >= params.min_investable_cap
+
+    # Free float
+    results['Free Float %'] = ipoc.free_float_ratio
+    results['Pass Free Float'] = ipoc.free_float_ratio >= params.require_free_float
+
+    # Liquidity
+    if params.require_liquidity:
+        ok_turnover = True
+        ok_freq = True
+        if params.min_turnover is not None:
+            ok_turnover = (ipoc.turnover is not None and ipoc.turnover >= params.min_turnover)
+        if params.min_trade_frequency is not None:
+            ok_freq = (ipoc.trade_freq is not None and ipoc.trade_freq >= params.min_trade_frequency)
+        results['Pass Liquidity'] = ok_turnover and ok_freq
+    else:
+        results['Pass Liquidity'] = True
+
+    # Foreign room
+    results['Foreign Room %'] = ipoc.foreign_room
+    results['Pass Foreign Room'] = (ipoc.foreign_room is None 
+                                    or ipoc.foreign_room >= params.require_foreign_room)
+
+    # Final decision
+    results['Fast Entry Eligible'] = (results['Pass FMC']
+                                      and results['Pass Rank']
+                                      and results['Pass Investable']
+                                      and results['Pass Free Float']
+                                      and results['Pass Liquidity']
+                                      and results['Pass Foreign Room'])
+    return results
+
+# --------------------------
+# FTSE GEIS and MSCI GIMI Parameters
+# --------------------------
+
+ftse_geis_params = IndexParams(
+    name = "FTSE GEIS Fast Entry",
+    min_fmc = 2_000_000_000,   # USD 2B investable market cap
+    min_investable_cap = 2_000_000_000,
+    max_rank = 500,            # top 500 global
+    require_liquidity = False, # liquidity often waived for IPOs
+    require_free_float = 0.15,
+    require_foreign_room = 0.15
+)
+
+msci_gimi_params = IndexParams(
+    name = "MSCI GIMI Fast Entry",
+    min_fmc = 1_800_000_000,   # example: 1.8× cutoff for Standard index
+    min_investable_cap = 1_800_000_000,
+    max_rank = 500,
+    require_liquidity = True,
+    min_turnover = 30_000_000,
+    min_trade_frequency = 0.75,
+    require_free_float = 0.15,
+    require_foreign_room = 0.15
+)
+
+# --------------------------
+# Example IPO Candidate
+# --------------------------
+
+ipo_test = IPOCandidate(
+    offering_shares = 70_000_000,
+    first_day_close_price = 30.0,
+    full_market_cap = 6_000_000_000,
+    free_float_ratio = 0.2,   # 20% float
+    rank = 150,
+    turnover = 100_000_000,
+    trade_freq = 0.9,
+    foreign_room = 0.25
+)
+
+# --------------------------
+# Run checks and display in DataFrame
+# --------------------------
+
+results = []
+for idx_params in [ftse_geis_params, msci_gimi_params]:
+    results.append(check_fast_entry(ipo_test, idx_params))
+
+df = pd.DataFrame(results)
+df
