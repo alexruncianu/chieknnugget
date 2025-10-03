@@ -673,3 +673,112 @@ for idx_params in [ftse_geis_params, msci_gimi_params]:
 
 df = pd.DataFrame(results)
 df
+
+
+-----
+
+
+# Portfolio Trading Catch-Up Notes
+
+## 1️⃣ Opening / Context
+- “Thanks for taking the time — I wanted to check in on where I stand and what I should be focusing on.”
+- Goal: understand expectations, focus areas, and how to accelerate learning.
+
+---
+
+## 2️⃣ Expectations & Feedback
+- What do you expect from me at this stage on the desk?
+- What does ‘excelling’ look like for a junior trader here?
+- Any feedback on how I’ve been doing so far?
+
+---
+
+## 3️⃣ Focus Areas & Development
+- What should my main focus be over the next 6–12 months?
+- Which skills or habits set apart juniors who go on to become strong risk-takers?
+- Are there particular markets, sectors, or products I should deepen knowledge in?
+
+---
+
+## 4️⃣ Skills / Progress Update
+- I’ve been improving my Python skills — building tools for analytics and workflow efficiency.
+- (Optional) I’ve been studying factor risks and portfolio exposures, not just single names.
+
+---
+
+## 5️⃣ Pathway Into Trading / Risk
+- What does the pathway look like from junior trader → running risk → senior trader?
+- When do juniors usually start getting involved in trading decisions or managing small books?
+- Are there exams or exchange registrations I should plan for?
+- Already done: FCA competency (if UK). Next: CISI / IMC / Series 7/57 depending on region.
+
+---
+
+## 6️⃣ Big Picture / Desk Insight
+- Biggest trends/challenges in portfolio trading right now?
+- How is the desk evolving — more electronic, more risk transfer, or client facilitation?
+
+---
+
+## 7️⃣ Structural ETF Risks / Shorting
+- **Leveraged/Inverse ETFs:**  
+  - Decay comes from daily rebalancing → volatility drag + compounding.  
+  - Shorting risky because large trending moves can explode against you.  
+  - Example: 2x ETF, index +10% then −10% → ETF loses 4%, short payoff not symmetric.
+- **Commodity / VIX ETFs:**  
+  - Decay comes from roll yield (contango) → repeated selling cheap front-month, buying expensive next-month.  
+  - Tail risk is large, borrow costs can be high.  
+
+- Floor explanation:  
+  > “For equity leveraged ETFs, drag is from daily rebalancing. For commodity/VIX ETFs, it’s from roll yield. Both bleed over time, but big moves can destroy shorts quickly — that’s why it’s not a free lunch.”
+
+---
+
+## 8️⃣ Portfolio Risk Metrics
+- **VaR (Value at Risk):** Maximum expected loss at a confidence level over a horizon.  
+  - Example: 1-day VaR $1M at 95% → 95% chance losses ≤ $1M.
+- **Types of VaR:** Parametric / Historical / Monte Carlo
+- **Related Metrics:** Expected Shortfall (CVaR), stress tests, scenario analysis, incremental/marginal VaR, factor sensitivities.
+- **Use on desk:** Position sizing, hedging, internal risk monitoring, trade approvals.
+- **Caveats:** Assumes normal conditions, misses fat tails. Must complement with stress testing.
+
+- Floor explanation:  
+  > “VaR gives a confidence-level estimate of maximum expected loss. On the desk, it guides position sizing and exposure, but we complement it with stress tests since it doesn’t capture tail events.”
+
+---
+
+## 9️⃣ Exams / Registrations
+- **US:** SIE → Series 7 → Series 57 (+ Series 63 if client-facing across states)
+- **UK / Europe:** FCA competency done, then CISI exams or IMC; internal sign-offs for exchange registration.
+- **Asia:** HKSI (LE 1/7/8), SGX CMFAS modules.
+- **Exchange registration:** Usually handled by compliance; includes online modules / attestations.  
+
+- Smart 1:1 question:  
+  > “I’ve completed FCA competency. When do juniors usually get exchange registrations signed off, e.g., LSE or other venues?”
+
+---
+
+## 🔟 Mistakes to Avoid Early
+- Thinking in single names instead of portfolio/factor exposures.
+- Overtrading or chasing P&L.
+- Ignoring sector/factor concentration in baskets.
+- Ignoring liquidity or operational risks.
+- Over-promising fills or trading ability to seniors or clients.
+
+---
+
+## 1️⃣1️⃣ Questions to Ask Your Manager
+1. What do you expect from me at this stage, and what does excelling look like?  
+2. Where should I focus my learning/development over the next 6–12 months?  
+3. Are there particular markets, sectors, or products you’d like me to deepen knowledge in?  
+4. Feedback: anything I should start doing differently tomorrow?  
+5. Pathway: what does progression look like from junior → running risk?  
+6. Skills: which skills/habits set apart juniors who succeed?  
+7. Exams/Registrations: what should I plan for and when?  
+8. Big picture: biggest trends or challenges on the desk right now?
+
+---
+
+## 1️⃣2️⃣ Wrap / Close
+- “Thanks for the guidance — this is really helpful. If there’s one thing I should start doing differently or better immediately, what would it be?”  
+- “If I want to prepare to be useful when opportunities to take risk come up, what’s the single most important thing I should do?”
