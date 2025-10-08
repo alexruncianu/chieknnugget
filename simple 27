@@ -1,0 +1,95 @@
+# ================================================================
+# PFIC Screener for Bloomberg Excel Exports
+# Author: [Your Name]
+# ================================================================
+
+import pandas as pd
+import numpy as np
+
+# === Step 1: Load Bloomberg Excel File ===
+file_path = "bloomberg_data.xlsx"  # ensure file is in same folder
+df = pd.read_excel(file_path)
+
+# === Step 2: Clean Column Names ===
+df.columns = df.columns.str.strip().str.lower()
+
+# === Step 3: Check Required Columns ===
+required = ['company name', 'market cap', 'country domicile', 'gics sector name']
+for col in required:
+    if col not in df.columns:
+        raise ValueError(f"Missing required column: '{col}'. Please ensure your Excel matches the format.")
+
+# === Step 4: Calculate Passive Ratios (if numeric data exists) ===
+def safe_ratio(numerator, denominator):
+    try:
+        return float(numerator) / float(denominator) if denominator and denominator != 0 else np.nan
+    except:
+        return np.nan
+
+if 'investment income' in df.columns and 'total revenue' in df.columns:
+    df['passive_income_ratio'] = df.apply(lambda x: safe_ratio(x['investment income'], x['total revenue']), axis=1)
+else:
+    df['passive_income_ratio'] = np.nan
+
+if 'investment assets' in df.columns and 'total assets' in df.columns:
+    df['investment_asset_ratio'] = df.apply(lambda x: safe_ratio(x['investment assets'], x['total assets']), axis=1)
+else:
+    df['investment_asset_ratio'] = np.nan
+
+# === Step 5: Define PFIC Logic ===
+def is_pfic(row):
+    """
+    Flags a company as PFIC if:
+    1. It's non-US domiciled
+    2. Operates in a passive/financial sector
+    3. Has >75% passive income or >50% investment assets (if available)
+    """
+    country = str(row.get('country domicile', '')).lower()
+    sector = str(row.get('gics sector name', '')).lower()
+
+    # Rule 1: Must be foreign
+    is_foreign = country not in ['united states', 'us', 'u.s.', 'usa']
+
+    # Rule 2: Passive sectors (broad categories)
+    passive_sectors = [
+        'financials', 'real estate', 'reit', 'investment',
+        'asset management', 'holding', 'trust', 'fund', 'capital'
+    ]
+    in_passive_sector = any(word in sector for word in passive_sectors)
+
+    # Rule 3: Passive ratios (if data available)
+    passive_income_ratio = row.get('passive_income_ratio', np.nan)
+    investment_asset_ratio = row.get('investment_asset_ratio', np.nan)
+
+    meets_ratio_test = (
+        (not np.isnan(passive_income_ratio) and passive_income_ratio >= 0.75) or
+        (not np.isnan(investment_asset_ratio) and investment_asset_ratio >= 0.5)
+    )
+
+    # Combine conditions
+    if is_foreign and (in_passive_sector or meets_ratio_test):
+        return True
+    return False
+
+# === Step 6: Apply Logic ===
+df['likely_pfic'] = df.apply(is_pfic, axis=1)
+
+# === Step 7: Display & Export Results ===
+pfic_df = df[df['likely_pfic']].copy()
+
+print("===================================================")
+print(f"✅ PFIC Screening Complete: {len(pfic_df)} potential PFICs found.")
+print("===================================================\n")
+
+display_cols = [
+    'company name', 'country domicile', 'gics sector name', 'market cap',
+    'passive_income_ratio', 'investment_asset_ratio', 'likely_pfic'
+]
+
+display(df[display_cols].head(20))
+
+# Save results
+output_file = "pfic_results.xlsx"
+pfic_df.to_excel(output_file, index=False)
+
+print(f"💾 Results saved to '{output_file}'. Open in Excel to view all flagged PFICs.")
