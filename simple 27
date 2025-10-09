@@ -1,5 +1,155 @@
 """
 ===========================================================
+            PFIC Screener with Visual Analysis
+===========================================================
+
+INSTRUCTIONS:
+
+1. Place this Jupyter Notebook and your Bloomberg export
+   in the same folder, for example:
+
+       PFIC Screen/
+       ├── PFIC_Screener.ipynb
+       └── bloomberg_pfic.csv
+
+2. Your CSV file must include the following columns:
+
+   | Column Name        | Example                 | Description |
+   |--------------------|-------------------------|--------------|
+   | Ticker             | AAPL US                 | Company identifier |
+   | Company Name       | Apple Inc               | Company name |
+   | Sector             | Information Technology  | Company sector |
+   | Market Cap         | 2,500,000,000,000       | Market capitalization |
+   | Total Revenue      | 365,000,000,000         | Total company revenue |
+   | Investment Income  | 25,000,000,000          | Passive investment income |
+   | Total Assets       | 400,000,000,000         | Total assets |
+   | Investment Assets  | 210,000,000,000         | Passive investment assets |
+
+3. Save it as:
+       bloomberg_pfic.csv
+
+4. Run this entire cell in Jupyter Notebook.
+
+Output:
+   ✅ Clean table of PFIC likelihood
+   📊 Charts to visualize passive ratios
+   💾 CSV output: pfic_results.csv
+===========================================================
+"""
+
+# === IMPORTS ===
+import pandas as pd
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+
+# === FILE PATH ===
+file_path = "bloomberg_pfic.csv"
+
+if not os.path.exists(file_path):
+    raise FileNotFoundError(
+        f"❌ File not found. Please ensure 'bloomberg_pfic.csv' "
+        "is in the same folder as this notebook."
+    )
+
+print(f"✅ Found file: {file_path}")
+
+# === LOAD DATA ===
+df = pd.read_csv(file_path)
+df.columns = df.columns.str.strip()
+
+# === REQUIRED COLUMNS ===
+required_cols = [
+    "Ticker", "Company Name", "Sector",
+    "Total Revenue", "Investment Income", "Total Assets", "Investment Assets"
+]
+
+missing = [c for c in required_cols if c not in df.columns]
+if missing:
+    raise ValueError(f"❌ Missing columns in CSV: {missing}")
+
+# === CLEAN NUMERIC COLUMNS ===
+numeric_cols = ["Total Revenue", "Investment Income", "Total Assets", "Investment Assets"]
+for col in numeric_cols:
+    df[col] = (
+        df[col]
+        .astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .replace("nan", np.nan)
+        .astype(float)
+    )
+
+# === CALCULATE RATIOS ===
+df["Passive Income %"] = df["Investment Income"] / df["Total Revenue"]
+df["Passive Asset %"] = df["Investment Assets"] / df["Total Assets"]
+
+# === PFIC THRESHOLDS ===
+INCOME_THRESHOLD = 0.75
+ASSET_THRESHOLD = 0.50
+
+# === PFIC FLAG LOGIC ===
+def check_pfic(row):
+    income_flag = row["Passive Income %"] >= INCOME_THRESHOLD if pd.notna(row["Passive Income %"]) else False
+    asset_flag = row["Passive Asset %"] >= ASSET_THRESHOLD if pd.notna(row["Passive Asset %"]) else False
+    return income_flag or asset_flag
+
+df["Likely PFIC"] = df.apply(check_pfic, axis=1)
+
+# === REASON EXPLANATION ===
+def reason(row):
+    reasons = []
+    if pd.notna(row["Passive Income %"]) and row["Passive Income %"] >= INCOME_THRESHOLD:
+        reasons.append("Passive income ≥ 75%")
+    if pd.notna(row["Passive Asset %"]) and row["Passive Asset %"] >= ASSET_THRESHOLD:
+        reasons.append("Passive assets ≥ 50%")
+    if not reasons:
+        reasons.append("Below PFIC thresholds")
+    return "; ".join(reasons)
+
+df["Reason"] = df.apply(reason, axis=1)
+
+# === SAVE RESULTS ===
+output_path = "pfic_results.csv"
+df.to_csv(output_path, index=False)
+print(f"\n💾 Results saved to: {output_path}\n")
+
+# === SUMMARY OUTPUT ===
+summary = df[["Ticker", "Company Name", "Sector", "Passive Income %", "Passive Asset %", "Likely PFIC", "Reason"]]
+pd.set_option('display.float_format', '{:.2%}'.format)
+print("=== PFIC Screening Results ===\n")
+display(summary)
+
+# === BASIC STATS ===
+num_pfic = df["Likely PFIC"].sum()
+total = len(df)
+print(f"\n⚠️  {num_pfic} out of {total} companies flagged as likely PFICs.")
+
+# === VISUALS ===
+plt.figure(figsize=(10, 6))
+plt.scatter(df["Passive Asset %"], df["Passive Income %"], c=df["Likely PFIC"].map({True: 'red', False: 'green'}))
+plt.axhline(INCOME_THRESHOLD, color='gray', linestyle='--', label="75% Passive Income Threshold")
+plt.axvline(ASSET_THRESHOLD, color='blue', linestyle='--', label="50% Passive Asset Threshold")
+plt.title("PFIC Passive Income vs Passive Assets")
+plt.xlabel("Passive Asset %")
+plt.ylabel("Passive Income %")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# === BAR CHART (TOP 15 BY PASSIVE ASSETS) ===
+top15 = df.sort_values("Passive Asset %", ascending=False).head(15)
+plt.figure(figsize=(10, 6))
+plt.barh(top15["Company Name"], top15["Passive Asset %"], color=np.where(top15["Likely PFIC"], 'red', 'green'))
+plt.xlabel("Passive Asset %")
+plt.title("Top 15 Companies by Passive Asset Ratio")
+plt.gca().invert_yaxis()
+plt.show()
+
+
+
+"""
+===========================================================
         PFIC Screener using Bloomberg CSV Export
         (for folder: PFIC Screen/)
 ===========================================================
