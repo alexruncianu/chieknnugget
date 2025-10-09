@@ -1,6 +1,157 @@
 """
 ===========================================================
         PFIC Screener using Bloomberg CSV Export
+        (for folder: PFIC Screen/)
+===========================================================
+
+INSTRUCTIONS:
+
+1. Make sure your Jupyter Notebook and your Bloomberg CSV file are BOTH
+   in the same folder, e.g.:
+
+       PFIC Screen/
+       ├── PFIC_Screener.ipynb
+       └── bloomberg_pfic.csv
+
+2. The Bloomberg export must include these columns:
+
+   | Bloomberg Field Name      | Mnemonic                | Column Name in CSV (exact) |
+   |---------------------------|--------------------------|-----------------------------|
+   | Ticker                   | TICKER                   | Ticker                      |
+   | Company Name              | NAME                     | Company Name                |
+   | Country of Domicile       | CNTRY_DOMICILE           | Country Domicile            |
+   | GICS Sector Name          | GICS_SECTOR_NAME         | Sector                      |
+   | Market Cap (USD)          | CUR_MKT_CAP              | Market Cap                  |
+   | Total Revenue             | IS_TOT_REV               | Total Revenue               |
+   | Investment Income         | IS_INVESTMENT_INCOME     | Investment Income           |
+   | Total Assets              | BS_TOT_ASSET             | Total Assets                |
+   | Investment Assets         | BS_INVESTMENTS_ASSETS    | Investment Assets           |
+
+3. Save the file as:  bloomberg_pfic.csv
+   (no spaces, correct extension)
+
+4. Run this entire code block.
+
+5. Output:
+   - Printed summary in the notebook
+   - Full results saved as: pfic_results.csv
+
+===========================================================
+"""
+
+import pandas as pd
+import numpy as np
+import os
+
+# === Locate CSV File Automatically ===
+folder = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+file_path = os.path.join(folder, "bloomberg_pfic.csv")
+
+if not os.path.exists(file_path):
+    raise FileNotFoundError(
+        f"❌ Could not find 'bloomberg_pfic.csv' in this folder:\n{folder}\n\n"
+        "➡️ Please confirm the file is in the same folder as your notebook."
+    )
+
+print(f"✅ Found Bloomberg file at: {file_path}")
+
+# === SETTINGS ===
+PASSIVE_INCOME_THRESHOLD = 0.75   # 75% passive income
+PASSIVE_ASSET_THRESHOLD = 0.50    # 50% passive assets
+
+# === LOAD DATA ===
+df = pd.read_csv(file_path)
+df.columns = df.columns.str.strip()  # clean up headers
+
+# === CHECK REQUIRED COLUMNS ===
+required = [
+    "Ticker", "Company Name", "Country Domicile", "Sector",
+    "Total Revenue", "Investment Income", "Total Assets", "Investment Assets"
+]
+missing = [c for c in required if c not in df.columns]
+if missing:
+    raise ValueError(f"❌ Missing columns in your CSV file: {missing}\n"
+                     f"Please ensure headers exactly match those listed above.")
+
+# === CLEAN NUMERIC FIELDS ===
+for col in ["Total Revenue", "Investment Income", "Total Assets", "Investment Assets"]:
+    df[col] = (
+        df[col]
+        .astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .replace("nan", np.nan)
+        .astype(float)
+    )
+
+# === CALCULATE RATIOS ===
+df["Passive Income %"] = df["Investment Income"] / df["Total Revenue"]
+df["Passive Asset %"] = df["Investment Assets"] / df["Total Assets"]
+
+# === PFIC LOGIC ===
+def is_foreign(country):
+    """Return True if not US-domiciled."""
+    if pd.isna(country):
+        return False
+    text = str(country).lower()
+    return not any(word in text for word in ["united states", "us", "u.s.", "america"])
+
+def likely_pfic(row):
+    """Flag potential PFIC based on thresholds."""
+    if not is_foreign(row["Country Domicile"]):
+        return False
+    income_flag = (
+        row["Passive Income %"] >= PASSIVE_INCOME_THRESHOLD
+        if pd.notna(row["Passive Income %"])
+        else False
+    )
+    asset_flag = (
+        row["Passive Asset %"] >= PASSIVE_ASSET_THRESHOLD
+        if pd.notna(row["Passive Asset %"])
+        else False
+    )
+    return income_flag or asset_flag
+
+df["Likely PFIC"] = df.apply(likely_pfic, axis=1)
+
+# === ADD EXPLANATION ===
+def reason(row):
+    if not is_foreign(row["Country Domicile"]):
+        return "US-domiciled"
+    reasons = []
+    if pd.notna(row["Passive Income %"]) and row["Passive Income %"] >= PASSIVE_INCOME_THRESHOLD:
+        reasons.append("Passive income ≥ 75%")
+    if pd.notna(row["Passive Asset %"]) and row["Passive Asset %"] >= PASSIVE_ASSET_THRESHOLD:
+        reasons.append("Passive assets ≥ 50%")
+    if not reasons:
+        reasons.append("Foreign but below thresholds")
+    return "; ".join(reasons)
+
+df["Reason"] = df.apply(reason, axis=1)
+
+# === DISPLAY RESULTS ===
+print("\n=== PFIC Screening Summary ===\n")
+print(df[["Ticker", "Company Name", "Country Domicile", "Sector",
+          "Passive Income %", "Passive Asset %",
+          "Likely PFIC", "Reason"]])
+
+# === SAVE OUTPUT ===
+output_file = os.path.join(folder, "pfic_results.csv")
+df.to_csv(output_file, index=False)
+print(f"\n✅ Full results saved to: {output_file}")
+
+# === PRINT FLAGGED COMPANIES ===
+flagged = df[df["Likely PFIC"]]
+print(f"\n⚠️  {len(flagged)} potential PFIC(s) flagged:\n")
+print(flagged[["Ticker", "Company Name", "Country Domicile", "Reason"]])
+
+print("\n✅ Done. Review 'pfic_results.csv' for full details.")
+
+
+
+"""
+===========================================================
+        PFIC Screener using Bloomberg CSV Export
 ===========================================================
 
 INSTRUCTIONS:
