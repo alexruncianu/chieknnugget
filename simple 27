@@ -92,4 +92,299 @@ display(df[display_cols].head(20))
 output_file = "pfic_results.xlsx"
 pfic_df.to_excel(output_file, index=False)
 
-print(f"💾 Results saved to '{output_file}'. Open in Excel to view all flagged PFICs.")
+print(f"💾 Results saved to '{output_file}'
+
+
+
+
+# PFIC Forensic Screener - Detailed, copy & paste into Jupyter
+# Requirements: pandas, numpy, openpyxl, country_converter (optional)
+# pip install pandas numpy openpyxl country_converter
+
+import os
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+# ----------------------------
+# User settings
+# ----------------------------
+INPUT_FILE = "bloomberg_data.xlsx"   # put your Bloomberg export here
+OUTPUT_EXCEL = "pfic_forensic_report.xlsx"
+FLAGGED_FILE = "pfic_flagged.xlsx"
+CSV_OUT = "pfic_forensic_detailed.csv"
+
+# Thresholds per PFIC rules (statutory thresholds)
+PASSIVE_INCOME_THRESHOLD = 0.75   # 75% of gross income passive
+PASSIVE_ASSET_THRESHOLD = 0.50    # 50% of assets produce passive income
+
+# Tolerances (for human review): allow tiny epsilon due to rounding
+EPS = 1e-9
+
+# ----------------------------
+# Helper functions
+# ----------------------------
+def read_input(file_path):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Input file not found: {file_path}. Please export Bloomberg file to this name.")
+    # read with pandas (supports .xlsx)
+    df = pd.read_excel(file_path, engine="openpyxl")
+    # normalize column names (lowercase & stripped)
+    df.columns = df.columns.str.strip()
+    return df
+
+def safe_num(x):
+    """Convert a cell to float or NaN (handles strings with commas, parentheses)."""
+    if pd.isna(x):
+        return np.nan
+    try:
+        # remove commas and parentheses and currency symbols
+        s = str(x).replace(',', '').replace('(', '-').replace(')', '').replace('$','').strip()
+        return float(s)
+    except:
+        return np.nan
+
+def ensure_ratio(numer, denom):
+    """Return ratio numer/denom or NaN if denom missing/0."""
+    n = safe_num(numer)
+    d = safe_num(denom)
+    if pd.isna(n) or pd.isna(d) or d == 0:
+        return np.nan
+    return n / d
+
+def isin_to_country(isin):
+    """Infer country from ISIN prefix (first 2 letters) if present."""
+    if pd.isna(isin):
+        return None
+    try:
+        return isin.strip()[:2].upper()
+    except:
+        return None
+
+def is_us_country_text(s):
+    if pd.isna(s):
+        return False
+    s2 = str(s).lower()
+    return any(x in s2 for x in ['united states','usa','u.s.','us','america'])
+
+# ----------------------------
+# Load data
+# ----------------------------
+print("Loading input file:", INPUT_FILE)
+df_raw = read_input(INPUT_FILE)
+print(f"Loaded {len(df_raw)} rows and columns: {list(df_raw.columns)}")
+
+# Standardize column names for internal use (lowercase)
+col_map = {c: c.strip() for c in df_raw.columns}
+df = df_raw.rename(columns=col_map)
+# We'll try to map commonly used names to canonical internal column names
+# Preferred exact names as per instructions above; but attempt flexible mapping
+canonical = {
+    'company name':'Company Name',
+    'name':'Company Name',
+    'ticker':'Ticker',
+    'id_isin':'ISIN',
+    'isin':'ISIN',
+    'cntry_domicile':'Country Domicile',
+    'country domicile':'Country Domicile',
+    'incorp_country':'Incorporation Country',
+    'incorporation country':'Incorporation Country',
+    'cur_mkt_cap':'Market Cap',
+    'market cap':'Market Cap',
+    'bs_tot_asset':'Total Assets',
+    'total assets':'Total Assets',
+    'bs_investments_assets':'Investment Assets',
+    'investment assets':'Investment Assets',
+    'is_tot_rev':'Total Revenue',
+    'total revenue':'Total Revenue',
+    'is_investment_income':'Investment Income',
+    'investment income':'Investment Income',
+    'is_interest_income':'Interest Income',
+    'is_non_op_inc':'Non-op Income',
+    'gics_sector_name':'GICS Sector Name',
+    'gics sector name':'GICS Sector Name',
+    'free_float':'Free Float',
+    'free float':'Free Float',
+    'iss_out':'Shares Outstanding',
+    'shares_outstanding':'Shares Outstanding',
+    'exchange country':'Exchange Country',
+    'exch_country':'Exchange Country'
+}
+
+# perform mapping if columns exist (case-insensitive)
+cols_lower = {c.lower(): c for c in df.columns}
+for key, canon in canonical.items():
+    if key in cols_lower:
+        df = df.rename(columns={cols_lower[key]: canon})
+
+# Now check required minimal columns
+required_min = ['Company Name', 'Market Cap', 'GICS Sector Name']
+missing_req = [c for c in required_min if c not in df.columns]
+if missing_req:
+    print("Warning: your Bloomberg file is missing recommended columns:", missing_req)
+    print("You can still run the script, but some checks will be 'N/A' and require manual inspection.")
+
+# Prepare output DataFrame with canonical cols (create missing with NaN)
+for c in ['Company Name','Ticker','ISIN','Country Domicile','Incorporation Country',
+          'Market Cap','Total Assets','Investment Assets','Total Revenue','Investment Income',
+          'Interest Income','Non-op Income','GICS Sector Name','Free Float','Shares Outstanding','Exchange Country']:
+    if c not in df.columns:
+        df[c] = np.nan
+
+# Convert numeric columns
+for numcol in ['Market Cap','Total Assets','Investment Assets','Total Revenue','Investment Income','Interest Income','Free Float','Shares Outstanding']:
+    df[numcol] = df[numcol].apply(safe_num)
+
+# Normalize Free Float if in percent 0-100 -> convert to 0-1
+if 'Free Float' in df.columns:
+    df['Free Float'] = df['Free Float'].apply(lambda x: (x/100.0) if (not pd.isna(x) and x>1.5) else x)
+
+# ----------------------------
+# Compute forensic PFIC metrics & checklist
+# ----------------------------
+def pfic_check_row(row):
+    reasons = []
+    flags = {}
+    # 1) Domicile: check Country Domicile, Incorporation Country, ISIN prefix
+    country_text = row.get('Country Domicile')
+    inc_country = row.get('Incorporation Country')
+    isin = row.get('ISIN')
+    inferred_isin_country = isin_to_country(isin)
+    # US test
+    is_us_dom = is_us_country_text(country_text) or is_us_country_text(inc_country)
+    if inferred_isin_country:
+        if inferred_isin_country in ['US','US']: # explicit
+            is_us_dom = True
+    flags['is_foreign_domicile'] = not is_us_dom
+    if not is_us_dom:
+        reasons.append("Foreign domicile (Country Domicile / Incorporation / ISIN indicates non-US)")
+    else:
+        reasons.append("US domicile flagged (not foreign)")
+    # 2) Passive income ratio
+    passive_income_ratio = ensure_ratio(row.get('Investment Income'), row.get('Total Revenue'))
+    # also include interest + non-op income if Investment Income missing
+    if pd.isna(passive_income_ratio):
+        alt_num = 0.0
+        got_alt = False
+        if not pd.isna(row.get('Interest Income')):
+            alt_num += safe_num(row.get('Interest Income')); got_alt=True
+        if not pd.isna(row.get('Non-op Income')):
+            alt_num += safe_num(row.get('Non-op Income')); got_alt=True
+        if got_alt and not pd.isna(row.get('Total Revenue')):
+            passive_income_ratio = safe_num(alt_num) / safe_num(row.get('Total Revenue'))
+    flags['passive_income_ratio'] = passive_income_ratio
+    if not pd.isna(passive_income_ratio):
+        if passive_income_ratio + EPS >= PASSIVE_INCOME_THRESHOLD:
+            flags['passive_income_flag'] = True
+            reasons.append(f"Passive income ratio >= {PASSIVE_INCOME_THRESHOLD:.0%} ({passive_income_ratio:.2%})")
+        else:
+            flags['passive_income_flag'] = False
+            reasons.append(f"Passive income ratio below threshold ({passive_income_ratio:.2%})")
+    else:
+        flags['passive_income_flag'] = None
+        reasons.append("Passive income ratio N/A (check Investment Income / Total Revenue fields)")
+    # 3) Investment asset ratio
+    inv_asset_ratio = ensure_ratio(row.get('Investment Assets'), row.get('Total Assets'))
+    flags['investment_asset_ratio'] = inv_asset_ratio
+    if not pd.isna(inv_asset_ratio):
+        if inv_asset_ratio + EPS >= PASSIVE_ASSET_THRESHOLD:
+            flags['passive_assets_flag'] = True
+            reasons.append(f"Investment asset ratio >= {PASSIVE_ASSET_THRESHOLD:.0%} ({inv_asset_ratio:.2%})")
+        else:
+            flags['passive_assets_flag'] = False
+            reasons.append(f"Investment asset ratio below threshold ({inv_asset_ratio:.2%})")
+    else:
+        flags['passive_assets_flag'] = None
+        reasons.append("Investment asset ratio N/A (check Investment Assets / Total Assets fields)")
+    # 4) Passive sector heuristic (REIT, Fund, Holding, Investment, Trust)
+    sector = str(row.get('GICS Sector Name', '')).lower() if not pd.isna(row.get('GICS Sector Name')) else ''
+    passive_sector_keywords = ['financials','real estate','reit','investment','asset management','holding','trust','fund','capital','private equity','venture']
+    in_passive_sector = any(k in sector for k in passive_sector_keywords)
+    flags['passive_sector'] = in_passive_sector
+    reasons.append("Passive-sector signal" if in_passive_sector else "Non-passive sector signal")
+    # 5) Market cap small / suspicious (optional heuristic)
+    mktcap = safe_num(row.get('Market Cap'))
+    flags['market_cap'] = mktcap
+    if not pd.isna(mktcap) and mktcap < 50e6:
+        reasons.append("Very small market cap (< $50m) - inspect for private/illiquid company")
+    # 6) Free float small (optional)
+    ff = row.get('Free Float')
+    flags['free_float'] = ff
+    if not pd.isna(ff):
+        if ff < 0.05:
+            reasons.append("Very low free float (<5%) - potential lock-up or strategic holdings")
+        elif ff < 0.20:
+            reasons.append("Low free float (<20%) - reduced public float")
+    # 7) Final PFIC estimation logic for initial screening
+    likely_pfic = False
+    # statutory style test: foreign AND (passive income threshold OR passive asset threshold)
+    if flags['is_foreign_domicile'] and ((flags['passive_income_flag'] is True) or (flags['passive_assets_flag'] is True)):
+        likely_pfic = True
+        reasons.append("Meets statutory-like PFIC thresholds (foreign + passive ratios)")
+    # heuristic flag: foreign + passive sector or very low free float (warrants manual review)
+    elif flags['is_foreign_domicile'] and (in_passive_sector or (not pd.isna(ff) and ff < 0.20)):
+        reasons.append("Heuristic PFIC candidate: foreign + passive-sector or low free float -> manual review recommended")
+        likely_pfic = True
+    else:
+        reasons.append("Not likely PFIC by automated tests (manual check recommended if uncertain)")
+    flags['likely_pfic'] = likely_pfic
+    flags['reasons'] = " ; ".join(reasons)
+    # include computed ratios for output
+    flags['passive_income_ratio_display'] = (f"{passive_income_ratio:.4f}" if not pd.isna(passive_income_ratio) else "N/A")
+    flags['investment_asset_ratio_display'] = (f"{inv_asset_ratio:.4f}" if not pd.isna(inv_asset_ratio) else "N/A")
+    return flags
+
+# Run row-by-row
+records = []
+for idx, r in df.iterrows():
+    out = pfic_check_row(r)
+    # produce a tidy record
+    rec = {
+        'Company Name': r.get('Company Name'),
+        'Ticker': r.get('Ticker'),
+        'ISIN': r.get('ISIN'),
+        'Country Domicile': r.get('Country Domicile'),
+        'Incorporation Country': r.get('Incorporation Country'),
+        'Market Cap': r.get('Market Cap'),
+        'GICS Sector Name': r.get('GICS Sector Name'),
+        'Free Float': r.get('Free Float'),
+        'Total Assets': r.get('Total Assets'),
+        'Investment Assets': r.get('Investment Assets'),
+        'Total Revenue': r.get('Total Revenue'),
+        'Investment Income': r.get('Investment Income'),
+        'Interest Income': r.get('Interest Income'),
+        'Non-op Income': r.get('Non-op Income'),
+        'Likely PFIC': out['likely_pfic'],
+        'Passive Income Ratio': out['passive_income_ratio_display'],
+        'Investment Asset Ratio': out['investment_asset_ratio_display'],
+        'Passive Sector Signal': out['passive_sector'],
+        'Is Foreign Domicile': out['is_foreign_domicile'],
+        'Free Float (raw)': out['free_float'],
+        'Checklist Reasons': out['reasons']
+    }
+    records.append(rec)
+
+out_df = pd.DataFrame.from_records(records)
+
+# Save outputs: excel with multiple sheets and a flagged-only file
+with pd.ExcelWriter(OUTPUT_EXCEL, engine='openpyxl') as writer:
+    out_df.to_excel(writer, sheet_name='PFIC_Forensic', index=False)
+    out_df[out_df['Likely PFIC'] == True].to_excel(writer, sheet_name='Flagged_PFIC', index=False)
+    out_df[out_df['Likely PFIC'] == False].to_excel(writer, sheet_name='NonFlagged', index=False)
+
+out_df.to_csv(CSV_OUT, index=False)
+out_df[out_df['Likely PFIC']].to_excel(FLAGGED_FILE, index=False)
+
+print(f"Done. Detailed PFIC forensic report saved to: {OUTPUT_EXCEL}")
+print(f"Flagged-only file saved to: {FLAGGED_FILE}")
+print(f"CSV saved to: {CSV_OUT}")
+print("\nSummary counts:")
+print(out_df['Likely PFIC'].value_counts(dropna=False))
+
+# Show first 10 flagged for quick inspection in notebook
+flagged = out_df[out_df['Likely PFIC'] == True]
+print(f"\nFirst 10 flagged PFIC candidates (showing checklist): {len(flagged)} found")
+display_cols = ['Company Name','Ticker','ISIN','Country Domicile','GICS Sector Name','Market Cap','Passive Income Ratio','Investment Asset Ratio','Free Float (raw)','Checklist Reasons']
+print(flagged[display_cols].head(10).to_string(index=False))
+
+. Open in Excel to view all flagged PFICs.")
