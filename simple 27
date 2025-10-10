@@ -1,5 +1,206 @@
 """
 ===========================================================
+            PFIC ETF Cross-Check & Dividend Impact
+===========================================================
+
+Welcome! This notebook helps you find whether likely PFIC
+companies appear in ETFs you're tracking, and whether those
+ETFs have seen dividend changes — which could hint at
+future deletions or basis trade opportunities.
+
+-----------------------------------------------------------
+🧭  HOW TO USE THIS:
+-----------------------------------------------------------
+
+1️⃣ FILES YOU NEED (from Bloomberg):
+
+(a) bloomberg_pfic.csv
+   This is your PFIC screening input.
+   You already have this from earlier.
+   It should include:
+       Ticker, Company Name, Sector,
+       Market Cap, Total Revenue,
+       Investment Income, Total Assets, Investment Assets
+
+(b) etf_holdings.csv
+   This contains the ETF constituents.
+   You can export this from Bloomberg by typing:
+       <ETF Ticker>  HDS <GO>
+   and then “Export to Excel”.
+   Format the CSV like this:
+       ETF Ticker, ETF Name, Constituent Ticker, Constituent Name, Weight (%)
+
+(c) (Optional) etf_dividends.csv
+   You can export this using:
+       <ETF Ticker>  DVD <GO>
+   Include:
+       ETF Ticker, ETF Name, Dividend Yield (12M), Dividend Change (YoY)
+
+2️⃣ Place all files in the SAME folder as your notebook.
+   Example:
+       PFIC Screen/
+       ├── PFIC_Screener.ipynb
+       ├── bloomberg_pfic.csv
+       ├── etf_holdings.csv
+       └── etf_dividends.csv   (optional)
+
+3️⃣ Run this cell in Jupyter.
+
+-----------------------------------------------------------
+💡  WHAT IT DOES:
+-----------------------------------------------------------
+
+• Loads your PFIC company list
+• Calculates which companies look like PFICs
+• Loads ETF holdings and checks if any PFICs are held
+• Calculates total PFIC weight per ETF
+• (Optionally) Adds dividend data to compare
+• Displays results in tables and plots
+
+-----------------------------------------------------------
+⚙️  OUTPUT:
+-----------------------------------------------------------
+
+✅ Summary table of PFIC exposure per ETF
+✅ Optional correlation of PFIC exposure vs dividend change
+✅ Plots for easy visual analysis
+✅ Trade insight: which ETFs might face deletions or basis widening
+===========================================================
+"""
+
+# === IMPORT REQUIRED PACKAGES ===
+import pandas as pd
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+
+# === STEP 1: LOAD YOUR FILES ===
+pfic_file = "bloomberg_pfic.csv"   # PFIC screening data
+etf_file = "etf_holdings.csv"      # ETF holdings data
+div_file = "etf_dividends.csv"     # (Optional) ETF dividend data
+
+# Check all files exist before proceeding
+for f in [pfic_file, etf_file]:
+    if not os.path.exists(f):
+        raise FileNotFoundError(f"❌ Could not find '{f}'. Please make sure it’s in the same folder as this notebook.")
+
+print("✅ All required files found!\n")
+
+# === STEP 2: LOAD AND CLEAN PFIC DATA ===
+df = pd.read_csv(pfic_file)
+df.columns = df.columns.str.strip()
+
+# Make sure the key numeric columns are numbers
+for col in ["Total Revenue", "Investment Income", "Total Assets", "Investment Assets"]:
+    df[col] = (
+        df[col]
+        .astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .replace("nan", np.nan)
+        .astype(float)
+    )
+
+# Calculate ratios
+df["Passive Income %"] = df["Investment Income"] / df["Total Revenue"]
+df["Passive Asset %"] = df["Investment Assets"] / df["Total Assets"]
+
+# Define thresholds (PFIC test)
+INCOME_THRESHOLD = 0.75
+ASSET_THRESHOLD = 0.50
+
+# Mark companies likely PFIC
+df["Likely PFIC"] = (
+    (df["Passive Income %"] >= INCOME_THRESHOLD) |
+    (df["Passive Asset %"] >= ASSET_THRESHOLD)
+)
+
+# Extract only PFIC tickers
+pfic_list = df[df["Likely PFIC"]]["Ticker"].unique()
+print(f"📊 {len(pfic_list)} likely PFIC companies identified.\n")
+
+# === STEP 3: LOAD ETF HOLDINGS DATA ===
+etf = pd.read_csv(etf_file)
+etf.columns = etf.columns.str.strip()
+
+# Clean up ticker formats
+etf["Constituent Ticker"] = etf["Constituent Ticker"].astype(str).str.upper().str.strip()
+df["Ticker"] = df["Ticker"].astype(str).str.upper().str.strip()
+
+# Merge ETF holdings with PFIC list
+merged = etf.merge(
+    df[["Ticker", "Company Name", "Likely PFIC"]],
+    left_on="Constituent Ticker",
+    right_on="Ticker",
+    how="left"
+)
+
+# If a match was found, mark it
+merged["PFIC Exposure"] = merged["Likely PFIC"].fillna(False)
+
+# === STEP 4: ETF-LEVEL SUMMARY ===
+etf_summary = (
+    merged.groupby(["ETF Ticker", "ETF Name"])
+    .agg(
+        Total_Constituents=("Constituent Ticker", "count"),
+        PFIC_Count=("PFIC Exposure", "sum"),
+        PFIC_Weight=("Weight (%)", lambda x: np.sum(x[merged.loc[x.index, "PFIC Exposure"]])),
+        Total_Weight=("Weight (%)", "sum")
+    )
+    .reset_index()
+)
+
+# Calculate PFIC exposure as % of total ETF
+etf_summary["PFIC Weight %"] = etf_summary["PFIC_Weight"] / etf_summary["Total_Weight"] * 100
+
+print("=== ETF PFIC Exposure Summary ===")
+display(etf_summary)
+
+# === STEP 5: OPTIONAL DIVIDEND DATA MERGE ===
+if os.path.exists(div_file):
+    div = pd.read_csv(div_file)
+    div.columns = div.columns.str.strip()
+    etf_summary = etf_summary.merge(div, on=["ETF Ticker", "ETF Name"], how="left")
+
+    print("\n=== ETF Dividend + PFIC Exposure ===")
+    display(etf_summary[["ETF Ticker", "ETF Name", "PFIC Weight %", "Dividend Yield (12M)", "Dividend Change (YoY)"]])
+
+    # === VISUAL: PFIC Exposure vs Dividend Change ===
+    plt.figure(figsize=(8,6))
+    plt.scatter(etf_summary["PFIC Weight %"], etf_summary["Dividend Change (YoY)"], color='purple')
+    plt.xlabel("PFIC Weight in ETF (%)")
+    plt.ylabel("Dividend Change (YoY)")
+    plt.title("PFIC Exposure vs Dividend Change (ETF Level)")
+    plt.grid(True)
+    plt.show()
+else:
+    print("\n⚠️ No dividend file found — skipping dividend correlation.\n")
+
+# === STEP 6: INTERPRETATION HELP ===
+print("""
+===========================================================
+📈  INTERPRETATION GUIDE
+===========================================================
+
+• “PFIC Weight %” → The % of ETF holdings that are likely PFICs.
+   Example: If PFIC Weight % = 8%, roughly 8% of that ETF
+   is exposed to names that might be deleted.
+
+• “Dividend Change (YoY)” → The year-over-year change in the ETF’s
+   dividend yield. If it rises while PFIC exposure drops, that could
+   indicate deletions and a tightening basis.
+
+💡 TRADE IDEA:
+   - ETFs with high PFIC exposure → potential deletions → rising basis
+   - Consider long futures vs short physical ETF as a hedge or spread.
+
+===========================================================
+✅ Analysis complete!
+===========================================================
+""")
+
+"""
+===========================================================
             PFIC Screener with Visual Analysis
 ===========================================================
 
