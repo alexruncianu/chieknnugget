@@ -1,5 +1,304 @@
 """
 ===========================================================
+  Factor vs Credit Spread Sensitivity Analysis (robust)
+===========================================================
+
+Copy & paste into Jupyter. This script:
+ - Handles ambiguous date formats (tries dayfirst False/True)
+ - Cleans numeric columns (removes commas, $)
+ - Computes daily returns
+ - Runs regressions (OLS) of each factor vs ITRX_MAIN and ITRX_XOVER
+ - Saves results to factor_credit_results.csv
+ - Plots:
+     * Heatmap of betas
+     * Ranked bar chart of most sensitive factors
+     * Scatter + regression lines for top factors
+
+INSTRUCTIONS:
+ - Place this notebook and your CSV factors_credit.csv in same folder.
+ - CSV format (simple): first column "Date", other columns are factor/index levels,
+   and must include columns named "ITRX_MAIN" and "ITRX_XOVER" (or similar - see detection).
+ - Date may be in dd/mm/YYYY or mm/dd/YYYY; the script will try to auto-detect.
+
+If parsing still fails, inspect the Date column values and standardize them in Excel.
+
+===========================================================
+"""
+
+import pandas as pd
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+from scipy import stats
+
+# ---------------------------
+# Configuration / filenames
+# ---------------------------
+FILE = "factors_credit.csv"   # your CSV
+OUT_RESULTS = "factor_credit_results.csv"
+TOP_N = 8   # how many top factors to show in ranked chart
+
+# ---------------------------
+# Helper: robust date parse
+# ---------------------------
+def parse_dates_robust(series):
+    """
+    Try parsing the Date series with dayfirst=False and dayfirst=True.
+    Return the parsed Series and which mode was chosen.
+    """
+    s = series.astype(str).str.strip()
+    parsed_false = pd.to_datetime(s, dayfirst=False, infer_datetime_format=True, errors='coerce')
+    parsed_true  = pd.to_datetime(s, dayfirst=True,  infer_datetime_format=True, errors='coerce')
+    count_false = parsed_false.notna().sum()
+    count_true  = parsed_true.notna().sum()
+    # Choose the parser that yields more valid dates (or default to False if tie)
+    if count_true > count_false:
+        chosen = parsed_true
+        method = "dayfirst=True"
+    else:
+        chosen = parsed_false
+        method = "dayfirst=False"
+    # If very few parsed successfully, return chosen but warn
+    if chosen.notna().sum() / len(chosen) < 0.5:
+        print("⚠️ Warning: less than 50% of Date values were parsed successfully.")
+        print("Sample Date values (first 10):")
+        print(series.head(10).to_list())
+        print("Attempting with chosen method:", method)
+    return chosen, method
+
+# ---------------------------
+# Load file
+# ---------------------------
+if not os.path.exists(FILE):
+    raise FileNotFoundError(f"Could not find '{FILE}' in the working folder ({os.getcwd()}).\n"
+                            "Ensure the CSV is named exactly and in the same folder as this notebook.")
+
+print(f"✅ Loading file: {FILE}")
+raw = pd.read_csv(FILE, low_memory=False)
+
+# Find date column (case-insensitive match)
+date_cols = [c for c in raw.columns if 'date' in c.lower()]
+if not date_cols:
+    # fallback: assume first column is date
+    date_col = raw.columns[0]
+    print(f"⚠️ No column containing 'date' found — using first column as Date: '{date_col}'")
+else:
+    date_col = date_cols[0]
+    print(f"Using '{date_col}' as Date column")
+
+# Parse dates robustly
+parsed_dates, method_used = parse_dates_robust(raw[date_col])
+raw[date_col] = parsed_dates
+print(f"Date parsing method chosen: {method_used}")
+print(f"Parsed dates: {parsed_dates.notna().sum()} / {len(parsed_dates)} valid")
+
+# If many NaT remain, try fallback: strip time components or replace common separators
+if raw[date_col].isna().sum() > 0:
+    # try cleaning common formats (replace '.' with '/')
+    sample = raw[date_col].astype(str).head(20).tolist()
+    # attempt one more robust try by replacing '.' -> '/'
+    alt = raw[date_col].astype(str).str.replace('.', '/', regex=False)
+    alt_parsed = pd.to_datetime(alt, dayfirst=True, infer_datetime_format=True, errors='coerce')
+    if alt_parsed.notna().sum() > parsed_dates.notna().sum():
+        raw[date_col] = alt_parsed
+        print("Applied alternate parsing (replaced '.' with '/'). Improved parsing count:",
+              alt_parsed.notna().sum())
+
+# Final check
+if raw[date_col].isna().all():
+    raise ValueError("Unable to parse any Date values. Please ensure Date column is in a standard format "
+                     "(e.g., YYYY-MM-DD, DD/MM/YYYY or MM/DD/YYYY).")
+elif raw[date_col].isna().sum() > 0:
+    print(f"⚠️ Note: {raw[date_col].isna().sum()} rows have unparsed Date values and will be dropped.")
+
+# ---------------------------
+# Convert Date to index and sort
+# ---------------------------
+raw = raw.rename(columns={date_col: "Date"})
+raw["Date"] = pd.to_datetime(raw["Date"])
+raw = raw.sort_values("Date").reset_index(drop=True)
+raw = raw.dropna(subset=["Date"])   # drop rows where Date couldn't be parsed
+raw.set_index("Date", inplace=True)
+
+# ---------------------------
+# Detect credit spread columns (flexible)
+# ---------------------------
+cols_lower = [c.lower() for c in raw.columns]
+credit_candidates = [c for c in raw.columns if any(k in c.lower() for k in ['itrax','itrx','iboxeig','iboxhyd','xover','crossover'])]
+# Prefer explicit names if present
+if "ITRX_MAIN" in raw.columns and "ITRX_XOVER" in raw.columns:
+    credit_cols = ["ITRX_MAIN", "ITRX_XOVER"]
+elif len(credit_candidates) >= 2:
+    credit_cols = credit_candidates[:2]
+    print("Detected credit columns:", credit_cols)
+else:
+    # Last resort: require user to have columns named ITRX_MAIN and ITRX_XOVER
+    if "ITRX_MAIN" in raw.columns or "ITRX_XOVER" in raw.columns:
+        credit_cols = [c for c in ["ITRX_MAIN","ITRX_XOVER"] if c in raw.columns]
+        print("Using found credit columns:", credit_cols)
+    else:
+        raise ValueError("Could not detect credit spread columns. Please ensure your CSV contains columns named "
+                         "'ITRX_MAIN' and 'ITRX_XOVER', or columns containing 'itrax' / 'iboxeig' / 'iboxhyd' / 'xover'.")
+
+print("Credit columns used:", credit_cols)
+
+# ---------------------------
+# Clean numeric columns (remove commas, $) and coerce to float
+# ---------------------------
+def clean_numeric_column(s):
+    return pd.to_numeric(s.astype(str).str.replace(',', '', regex=False)
+                           .str.replace('$', '', regex=False)
+                           .str.replace('%', '', regex=False)
+                           .replace('nan', np.nan), errors='coerce')
+
+# Apply cleaning to all non-date columns
+for col in raw.columns:
+    raw[col] = clean_numeric_column(raw[col])
+
+# Drop columns that are completely NaN after cleaning (optional)
+all_nan_cols = [c for c in raw.columns if raw[c].isna().all()]
+if all_nan_cols:
+    print("⚠️ Dropping columns that are all NaN after numeric cleaning:", all_nan_cols)
+    raw = raw.drop(columns=all_nan_cols)
+
+# ---------------------------
+# Compute daily returns
+# ---------------------------
+returns = raw.pct_change().dropna()
+print(f"Computed returns: {returns.shape[0]} rows × {returns.shape[1]} columns")
+
+# ---------------------------
+# Identify factor columns
+# ---------------------------
+factors = [c for c in returns.columns if c not in credit_cols]
+print("Found factor columns:", factors)
+
+# ---------------------------
+# Regression function
+# ---------------------------
+import statsmodels.api as sm
+
+def run_regression(y, x):
+    # remove NaNs
+    mask = y.notna() & x.notna()
+    if mask.sum() < 10:
+        return {"Beta": np.nan, "Alpha": np.nan, "R2": np.nan, "t": np.nan, "p": np.nan, "Corr": np.nan}
+    X = sm.add_constant(x[mask])
+    model = sm.OLS(y[mask], X).fit()
+    return {
+        "Beta": float(model.params[1]),
+        "Alpha": float(model.params[0]),
+        "R2": float(model.rsquared),
+        "t": float(model.tvalues[1]) if len(model.tvalues)>1 else np.nan,
+        "p": float(model.pvalues[1]) if len(model.pvalues)>1 else np.nan,
+        "Corr": float(np.corrcoef(y[mask], x[mask])[0,1])
+    }
+
+# ---------------------------
+# Run regressions for each factor vs each credit spread
+# ---------------------------
+rows = []
+for factor in factors:
+    for credit in credit_cols:
+        stats_res = run_regression(returns[factor], returns[credit])
+        row = {
+            "Factor": factor,
+            "Credit": credit,
+            "Beta": stats_res["Beta"],
+            "Alpha": stats_res["Alpha"],
+            "R2": stats_res["R2"],
+            "t-stat": stats_res["t"],
+            "p-value": stats_res["p"],
+            "Corr": stats_res["Corr"],
+            "Abs_Beta": abs(stats_res["Beta"]) if not np.isnan(stats_res["Beta"]) else np.nan
+        }
+        rows.append(row)
+
+results_df = pd.DataFrame(rows).sort_values(["Credit","Abs_Beta"], ascending=[True, False])
+results_df.to_csv(OUT_RESULTS, index=False)
+print(f"✅ Regression results saved to: {OUT_RESULTS}")
+
+# ---------------------------
+# Visual 1: Heatmap of Betas (Factors × Credit)
+# ---------------------------
+# pivot to matrix
+beta_pivot = results_df.pivot(index="Factor", columns="Credit", values="Beta").fillna(0)
+
+plt.figure(figsize=(10, max(4, 0.25*len(beta_pivot))))
+plt.imshow(beta_pivot, aspect='auto', cmap='coolwarm', vmin=-np.nanmax(np.abs(beta_pivot.values)), vmax=np.nanmax(np.abs(beta_pivot.values)))
+plt.colorbar(label="Beta")
+plt.yticks(ticks=np.arange(len(beta_pivot.index)), labels=beta_pivot.index)
+plt.xticks(ticks=np.arange(len(beta_pivot.columns)), labels=beta_pivot.columns)
+plt.title("Heatmap of Betas (Factor sensitivity to Credit spreads)")
+plt.tight_layout()
+# annotate values
+for i, row_idx in enumerate(beta_pivot.index):
+    for j, col_idx in enumerate(beta_pivot.columns):
+        val = beta_pivot.iloc[i, j]
+        plt.text(j, i, f"{val:.2f}", ha="center", va="center", color="black", fontsize=8)
+plt.show()
+
+# ---------------------------
+# Visual 2: Ranked bar chart of top factors by absolute beta (combined across credits)
+# ---------------------------
+# compute max absolute beta per factor across both credits
+max_abs = results_df.groupby("Factor")["Abs_Beta"].max().sort_values(ascending=False)
+top_factors = max_abs.head(TOP_N)
+plt.figure(figsize=(10, 6))
+bars = plt.barh(top_factors.index[::-1], top_factors.values[::-1], color='tab:blue')
+plt.xlabel("Max |Beta| vs any credit spread")
+plt.title(f"Top {TOP_N} Factors by maximum absolute beta to credit spreads")
+plt.grid(axis='x', linestyle='--', alpha=0.5)
+plt.tight_layout()
+plt.gca().invert_yaxis()
+for b in bars:
+    plt.text(b.get_width() + 0.01, b.get_y() + b.get_height()/2, f"{b.get_width():.3f}", va='center')
+plt.show()
+
+# ---------------------------
+# Visual 3: Scatter + regression lines for top 4 factors (by max abs beta)
+# ---------------------------
+top4 = max_abs.head(4).index.tolist()
+for factor in top4:
+    plt.figure(figsize=(12,5))
+    for i, credit in enumerate(credit_cols):
+        plt.subplot(1, len(credit_cols), i+1)
+        x = returns[credit]
+        y = returns[factor]
+        mask = x.notna() & y.notna()
+        slope, intercept, r_val, p_val, se = stats.linregress(x[mask], y[mask])
+        plt.scatter(x[mask], y[mask], s=10, alpha=0.4)
+        # plot regression line over scatter range
+        xs = np.linspace(x[mask].min(), x[mask].max(), 100)
+        plt.plot(xs, intercept + slope*xs, color='red', linewidth=2)
+        plt.title(f"{factor} vs {credit}\nβ={slope:.3f}, R²={r_val**2:.3f}, p={p_val:.3g}")
+        plt.xlabel(f"{credit} daily return")
+        plt.ylabel(f"{factor} daily return")
+        plt.grid(True, linestyle='--', alpha=0.4)
+    plt.tight_layout()
+    plt.show()
+
+# ---------------------------
+# Extra: print top table for quick review
+# ---------------------------
+print("\n=== Top factors (by max absolute beta) ===")
+top_summary = (results_df.groupby("Factor")
+               .agg(max_abs_beta=("Abs_Beta","max"),
+                    best_credit=("Credit", lambda x: results_df.loc[ x.index[0] ,"Credit"] if False else None))
+               .reset_index()
+              )
+# Simpler print using max_abs series
+top_table = pd.DataFrame({
+    "Factor": max_abs.head(TOP_N).index,
+    "MaxAbsBeta": max_abs.head(TOP_N).values
+})
+print(top_table.to_string(index=False))
+
+print("\n✅ Done — review the heatmap, ranked bars and scatter/regression plots above.")
+
+"""
+===========================================================
       Factor vs Credit Spread Sensitivity Analysis
 ===========================================================
 
