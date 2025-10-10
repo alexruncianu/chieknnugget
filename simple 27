@@ -1,5 +1,106 @@
 """
 ===========================================================
+      Factor vs Credit Spread Sensitivity Analysis
+===========================================================
+
+INSTRUCTIONS:
+
+1. Place this notebook and your Bloomberg CSV file in the same folder:
+       Credit Analysis/
+       ├── Credit_Analysis.ipynb
+       └── factors_credit.csv
+
+2. Your CSV must include daily levels with these columns:
+
+   | Date | Factor_1 | Factor_2 | ... | ITRX_MAIN | ITRX_XOVER |
+
+3. Save as: factors_credit.csv
+
+4. This script will:
+   • Compute daily returns
+   • Run regressions vs iTraxx Main and XOver
+   • Show correlation, beta, and R²
+   • Plot relationships
+
+===========================================================
+"""
+
+import pandas as pd
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+
+# === Load the Bloomberg CSV ===
+folder = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+file_path = os.path.join(folder, "factors_credit.csv")
+
+df = pd.read_csv(file_path)
+df.columns = df.columns.str.strip()
+df["Date"] = pd.to_datetime(df["Date"])
+df.set_index("Date", inplace=True)
+df = df.sort_index()
+
+print(f"✅ Loaded data with {df.shape[0]} rows and {df.shape[1]} columns")
+
+# === Compute daily percentage returns ===
+returns = df.pct_change().dropna()
+
+# === Identify factor columns (everything except the iTraxx columns) ===
+itraxx_cols = ["ITRX_MAIN", "ITRX_XOVER"]
+factor_cols = [c for c in returns.columns if c not in itraxx_cols]
+
+print("\nAnalyzing factors:")
+for f in factor_cols:
+    print(f" • {f}")
+
+# === Helper function: run regression and return summary ===
+def run_regression(y, x):
+    X = sm.add_constant(x)  # Adds intercept
+    model = sm.OLS(y, X).fit()
+    return {
+        "Beta": model.params[1],
+        "Alpha": model.params[0],
+        "R²": model.rsquared,
+        "t-stat": model.tvalues[1],
+        "p-value": model.pvalues[1],
+        "Corr": np.corrcoef(y, x)[0, 1]
+    }
+
+# === Run regressions ===
+results = []
+
+for factor in factor_cols:
+    for spread in itraxx_cols:
+        reg = run_regression(returns[factor], returns[spread])
+        reg["Factor"] = factor
+        reg["Credit_Spread"] = spread
+        results.append(reg)
+
+results_df = pd.DataFrame(results)[["Factor", "Credit_Spread", "Beta", "R²", "Corr", "t-stat", "p-value", "Alpha"]]
+
+# === Display summary ===
+print("\n=== Regression Results (Factor vs Credit) ===\n")
+print(results_df.round(3))
+
+# === Save output ===
+output_file = os.path.join(folder, "factor_credit_results.csv")
+results_df.to_csv(output_file, index=False)
+print(f"\n✅ Saved detailed results to: {output_file}")
+
+# === Visualization ===
+for factor in factor_cols:
+    for spread in itraxx_cols:
+        plt.figure(figsize=(6,4))
+        plt.scatter(returns[spread], returns[factor], alpha=0.5)
+        plt.xlabel(f"{spread} Daily Return")
+        plt.ylabel(f"{factor} Daily Return")
+        plt.title(f"{factor} vs {spread}\nBeta: {results_df[(results_df['Factor']==factor)&(results_df['Credit_Spread']==spread)]['Beta'].values[0]:.2f}")
+        plt.grid(True)
+        plt.show()
+
+"""
+===========================================================
             PFIC ETF Cross-Check & Dividend Impact
 ===========================================================
 
