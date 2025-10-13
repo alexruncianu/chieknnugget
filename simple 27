@@ -1,5 +1,190 @@
 """
 ===========================================================
+  Factor Leg Leverage Factor Score + Company Frequency Analysis
+===========================================================
+
+Inputs:
+- factor_members.csv  -> columns = factor legs, rows = tickers
+- leverage_scores.csv -> columns = same factor legs, rows = leverage factor scores
+
+Outputs:
+- CSV files:
+    • top_leverage_factor_score_companies.csv
+    • bottom_leverage_factor_score_companies.csv
+    • factor_leg_average_leverage_factor_score.csv
+    • most_common_companies_across_factors.csv
+- Visual charts for leverage factor scores and overlap
+===========================================================
+"""
+
+import pandas as pd
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+
+# === Config ===
+WORKDIR = os.getcwd()
+MEMBERS_CSV = os.path.join(WORKDIR, "factor_members.csv")
+LEVERAGE_CSV = os.path.join(WORKDIR, "leverage_scores.csv")
+
+TOP_N_COMPANIES = 25
+TOP_N_LEGS = 15
+
+# === Load CSVs ===
+members = pd.read_csv(MEMBERS_CSV, dtype=str)
+leverage = pd.read_csv(LEVERAGE_CSV, dtype=str)
+
+# === Clean factor names ===
+def clean_factor_name(name):
+    name = str(name).strip().upper()
+    name = name.replace(" ", "_").replace("-", "_")
+    if name.endswith("_1"):
+        name = name[:-2]
+    elif name.endswith("1"):
+        name = name[:-1]
+    name = ''.join(ch for ch in name if ch.isalnum() or ch == "_")
+    return name
+
+members.columns = [clean_factor_name(c) for c in members.columns]
+leverage.columns = [clean_factor_name(c) for c in leverage.columns]
+
+# Remove duplicate columns
+members = members.loc[:, ~members.columns.duplicated()]
+leverage = leverage.loc[:, ~leverage.columns.duplicated()]
+
+# Keep only common columns
+common_cols = sorted(set(members.columns) & set(leverage.columns))
+members = members[common_cols].applymap(lambda x: x.strip().upper() if isinstance(x, str) else x)
+leverage = leverage[common_cols].applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+# Align row counts
+max_rows = max(members.shape[0], leverage.shape[0])
+members = members.reindex(range(max_rows))
+leverage = leverage.reindex(range(max_rows))
+
+# === Stack and merge ===
+members_stack = members.stack().reset_index()
+members_stack.columns = ["row_idx", "Factor_Leg", "Ticker"]
+
+leverage_stack = leverage.stack().reset_index()
+leverage_stack.columns = ["row_idx", "Factor_Leg", "Leverage_Factor_Score"]
+
+df = pd.merge(members_stack, leverage_stack, on=["row_idx", "Factor_Leg"], how="left")
+df["Ticker"] = df["Ticker"].astype(str).str.upper().str.strip()
+df["Leverage_Factor_Score"] = pd.to_numeric(df["Leverage_Factor_Score"].astype(str).str.replace(",", ""), errors="coerce")
+df = df.dropna(subset=["Ticker", "Leverage_Factor_Score"])
+df = df.drop_duplicates(subset=["Ticker", "Factor_Leg"])
+df["Factor_Leg"] = df["Factor_Leg"].str.strip().str.upper()
+
+# === Compute summaries ===
+# Individual companies
+ticker_group = (
+    df.groupby("Ticker")
+    .agg(
+        Mean_Leverage_Factor_Score=("Leverage_Factor_Score", "mean"),
+        Count_Legs=("Factor_Leg", "nunique"),
+        Legs=("Factor_Leg", lambda x: ", ".join(sorted(set(x))))
+    )
+    .reset_index()
+    .sort_values("Mean_Leverage_Factor_Score", ascending=False)
+)
+
+# Factor leg averages
+leg_stats = (
+    df.groupby("Factor_Leg")
+    .agg(
+        Avg_Leverage_Factor_Score=("Leverage_Factor_Score", "mean"),
+        Median_Leverage_Factor_Score=("Leverage_Factor_Score", "median"),
+        Count_Tickers=("Ticker", "nunique")
+    )
+    .reset_index()
+)
+leg_stats = leg_stats.drop_duplicates(subset=["Factor_Leg"]).sort_values("Avg_Leverage_Factor_Score", ascending=False).reset_index(drop=True)
+
+# === Factor overlap matrix ===
+legs = sorted(df["Factor_Leg"].unique())
+leg_sets = {leg: set(df.loc[df["Factor_Leg"] == leg, "Ticker"]) for leg in legs}
+overlap = pd.DataFrame(index=legs, columns=legs, dtype=int)
+for a in legs:
+    for b in legs:
+        if a != b:
+            overlap.loc[a, b] = len(leg_sets[a].intersection(leg_sets[b]))
+        else:
+            overlap.loc[a, b] = np.nan
+
+top_legs = overlap.sum(axis=1).sort_values(ascending=False).head(TOP_N_LEGS).index.tolist()
+overlap_top = overlap.loc[top_legs, top_legs]
+
+# === Visualization 1: Factor Legs by Avg Leverage Factor Score ===
+plt.figure(figsize=(12, max(6, 0.25*len(leg_stats))))
+plt.barh(leg_stats["Factor_Leg"], leg_stats["Avg_Leverage_Factor_Score"], color="skyblue", edgecolor="k")
+plt.xlabel("Average Leverage Factor Score")
+plt.title("All Factor Legs by Average Leverage Factor Score")
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
+
+# === Visualization 2: Top & Bottom Companies ===
+top_companies = ticker_group.head(TOP_N_COMPANIES)
+bottom_companies = ticker_group.tail(TOP_N_COMPANIES).sort_values("Mean_Leverage_Factor_Score")
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=False)
+axes[0].barh(top_companies["Ticker"], top_companies["Mean_Leverage_Factor_Score"], color="crimson", edgecolor="k")
+axes[0].set_title(f"Top {TOP_N_COMPANIES} Most Leveraged Companies (Factor Score)")
+axes[0].invert_yaxis()
+axes[0].set_xlabel("Average Leverage Factor Score")
+
+axes[1].barh(bottom_companies["Ticker"], bottom_companies["Mean_Leverage_Factor_Score"], color="lightgreen", edgecolor="k")
+axes[1].set_title(f"Top {TOP_N_COMPANIES} Least Leveraged Companies (Factor Score)")
+axes[1].set_xlabel("Average Leverage Factor Score")
+
+plt.tight_layout()
+plt.show()
+
+# === Visualization 3: Factor Overlap Heatmap ===
+plt.figure(figsize=(8, 6))
+plt.imshow(overlap_top.values, cmap="Blues", interpolation="nearest")
+plt.colorbar(label="Number of Shared Companies")
+plt.xticks(range(len(top_legs)), top_legs, rotation=90)
+plt.yticks(range(len(top_legs)), top_legs)
+plt.title(f"Factor Overlap Matrix (Top {TOP_N_LEGS} Most Overlapping)")
+plt.tight_layout()
+plt.show()
+
+# === New: Most Common Companies Across Factors ===
+most_common = (
+    df.groupby("Ticker")
+    .agg(Count_Legs=("Factor_Leg", "nunique"), Legs=("Factor_Leg", lambda x: ", ".join(sorted(set(x)))))
+    .reset_index()
+    .sort_values("Count_Legs", ascending=False)
+)
+
+most_common_top = most_common.head(25)
+
+# === Export CSVs ===
+top_companies.to_csv(os.path.join(WORKDIR, "top_leverage_factor_score_companies.csv"), index=False)
+bottom_companies.to_csv(os.path.join(WORKDIR, "bottom_leverage_factor_score_companies.csv"), index=False)
+leg_stats.to_csv(os.path.join(WORKDIR, "factor_leg_average_leverage_factor_score.csv"), index=False)
+most_common_top.to_csv(os.path.join(WORKDIR, "most_common_companies_across_factors.csv"), index=False)
+
+# === Print summary tables ===
+print("\nTop 10 Highest-Leverage Factor Score Companies:\n")
+print(top_companies.head(10).to_string(index=False))
+
+print("\nTop 10 Lowest-Leverage Factor Score Companies:\n")
+print(bottom_companies.head(10).to_string(index=False))
+
+print("\nTop 10 Factor Legs by Average Leverage Factor Score:\n")
+print(leg_stats.head(10).to_string(index=False, formatters={"Avg_Leverage_Factor_Score":"{:.2f}".format}))
+
+print("\nBottom 10 Factor Legs by Average Leverage Factor Score:\n")
+print(leg_stats.tail(10).sort_values("Avg_Leverage_Factor_Score").to_string(index=False, formatters={"Avg_Leverage_Factor_Score":"{:.2f}".format}))
+
+print("\nTop 15 Companies Appearing in the Most Factor Legs:\n")
+print(most_common_top.to_string(index=False))
+
+"""
+===========================================================
   Factor Leg Leverage Factor Score Analysis (Final)
 ===========================================================
 
