@@ -1,5 +1,262 @@
 """
 ===========================================================
+  Factor Leg Leverage & Overlap Analysis (robust, improved)
+===========================================================
+
+WHAT THIS DOES (high level)
+- Reads two CSVs with the same *column layout*:
+    1) factor_members.csv  -> each column is a factor leg; rows list tickers
+    2) leverage_scores.csv -> same shape; rows contain leverage score for the ticker at same cell
+- Pairs each ticker with its leverage score using positional alignment (row + column).
+- Produces:
+    • A ranked list of companies by leverage (overall & per-leg)
+    • Which factor legs each company belongs to (overlap mapping)
+    • An overlap matrix (how many tickers shared between legs)
+    • Visualizations:
+        - Average leverage by leg (bar chart)
+        - Distribution of leverage (histogram)
+        - Overlap heatmap (legs × legs)
+        - Network graph (factors <-> top leveraged companies)
+- Saves results to CSV files for downstream review.
+
+USAGE
+- Put this script in the same folder as:
+    ./factor_members.csv
+    ./leverage_scores.csv
+- Then run in Jupyter. If networkx is not installed, uncomment the pip install line.
+
+NOTES & ASSUMPTIONS
+- Both CSVs must have identical column names (factor leg names) and the same number of *rows*.
+- Empty cells are treated as missing.
+- Tickers are treated as strings and matched only by position (same row/column).
+  If your tickers appear in different order between files, rearrange so they align.
+===========================================================
+"""
+
+# ---------- Imports ----------
+import pandas as pd
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+
+# Optional: network graph
+try:
+    import networkx as nx
+except Exception:
+    # uncomment next line to install if needed in notebook
+    # !pip install networkx
+    import networkx as nx
+
+# ---------- Config ----------
+WORKDIR = os.getcwd()                      # or set explicit path
+MEMBERS_CSV = os.path.join(WORKDIR, "factor_members.csv")
+LEVERAGE_CSV = os.path.join(WORKDIR, "leverage_scores.csv")
+
+OUT_SUMMARY = os.path.join(WORKDIR, "factor_leg_leverage_summary.csv")
+OUT_TOP = os.path.join(WORKDIR, "top_leveraged_companies.csv")
+OUT_OVERLAP_MATRIX = os.path.join(WORKDIR, "factor_overlap_matrix.csv")
+TOP_N_COMPANIES = 50   # number of top companies to show/save/network
+
+# ---------- Load & basic validation ----------
+if not os.path.exists(MEMBERS_CSV):
+    raise FileNotFoundError(f"Missing file: {MEMBERS_CSV}")
+if not os.path.exists(LEVERAGE_CSV):
+    raise FileNotFoundError(f"Missing file: {LEVERAGE_CSV}")
+
+members = pd.read_csv(MEMBERS_CSV, dtype=str, keep_default_na=False, na_values=["", "NA", "NaN"])
+leverage = pd.read_csv(LEVERAGE_CSV, dtype=str, keep_default_na=False, na_values=["", "NA", "NaN"])
+
+# Trim whitespace from column names & values
+members.columns = [c.strip() for c in members.columns]
+leverage.columns = [c.strip() for c in leverage.columns]
+members = members.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+leverage = leverage.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+# Basic shape check: if number of columns differ or column names differ, warn but proceed using intersection
+common_cols = [c for c in members.columns if c in leverage.columns]
+if len(common_cols) != len(members.columns) or len(common_cols) != len(leverage.columns):
+    print("⚠️ Column mismatch detected. Using intersection of columns:")
+    print(" - Members columns:", members.columns.tolist())
+    print(" - Leverage columns:", leverage.columns.tolist())
+    print(" - Using common columns:", common_cols)
+    # subset to common columns in same order
+    members = members[common_cols].copy()
+    leverage = leverage[common_cols].copy()
+
+# Ensure same number of rows: if different, pad shorter with NaN to align by position
+if members.shape[0] != leverage.shape[0]:
+    max_rows = max(members.shape[0], leverage.shape[0])
+    members = members.reindex(range(max_rows)).reset_index(drop=True)
+    leverage = leverage.reindex(range(max_rows)).reset_index(drop=True)
+    print(f"Info: rows differed and were aligned to {max_rows} rows by position.")
+
+# ---------- Stack both tables to long format while preserving row position ----------
+# The stack method preserves (row_index, column_name) pairing
+members_stack = members.stack(dropna=True).reset_index()
+members_stack.columns = ["row_idx", "Factor_Leg", "Ticker"]
+
+leverage_stack = leverage.stack(dropna=True).reset_index()
+leverage_stack.columns = ["row_idx", "Factor_Leg", "Leverage_Score_raw"]
+
+# Merge on both row_idx and Factor_Leg => the positional pairings
+combined = pd.merge(
+    members_stack,
+    leverage_stack,
+    on=["row_idx", "Factor_Leg"],
+    how="left"
+)
+
+# Clean tickers: remove empty/placeholder tickers
+combined["Ticker"] = combined["Ticker"].astype(str).str.strip()
+combined = combined[combined["Ticker"].str.len() > 0].copy()
+
+# Normalize ticker strings (optional: uppercase)
+combined["Ticker_norm"] = combined["Ticker"].str.upper()
+
+# Clean leverage scores: coerce to numeric
+combined["Leverage_Score"] = pd.to_numeric(combined["Leverage_Score_raw"].astype(str).str.replace(",", "").str.replace("%", ""), errors="coerce")
+
+# Drop rows where leverage is NaN (can't analyze)
+na_count = combined["Leverage_Score"].isna().sum()
+if na_count > 0:
+    print(f"⚠️ {na_count} rows have missing/invalid leverage scores and will be ignored in numeric analysis.")
+
+combined = combined.dropna(subset=["Leverage_Score"])
+
+# ---------- Aggregate analysis ----------
+# 1) For each ticker: get max leverage (if appears multiple times with different scores), and list of legs
+ticker_group = (
+    combined.groupby("Ticker_norm")
+    .agg(
+        Max_Leverage=("Leverage_Score", "max"),
+        Mean_Leverage=("Leverage_Score", "mean"),
+        Count_Appearances=("Factor_Leg", "nunique"),
+        Legs=("Factor_Leg", lambda x: ", ".join(sorted(set(x))))
+    )
+    .reset_index()
+    .sort_values("Max_Leverage", ascending=False)
+)
+
+# 2) For each factor leg: compute average leverage and top names
+leg_stats = (
+    combined.groupby("Factor_Leg")
+    .agg(
+        Avg_Leverage=("Leverage_Score", "mean"),
+        Median_Leverage=("Leverage_Score", "median"),
+        Count_Tickers=("Ticker_norm", "nunique")
+    )
+    .reset_index()
+    .sort_values("Avg_Leverage", ascending=False)
+)
+
+# 3) Overlap matrix: for each pair of legs count common tickers
+legs = sorted(combined["Factor_Leg"].unique())
+overlap_matrix = pd.DataFrame(index=legs, columns=legs, dtype=int).fillna(0)
+# prepare factor->set mapping
+leg_to_set = {leg: set(combined.loc[combined["Factor_Leg"]==leg, "Ticker_norm"].unique()) for leg in legs}
+for a in legs:
+    for b in legs:
+        overlap_matrix.loc[a, b] = len(leg_to_set[a].intersection(leg_to_set[b]))
+
+# ---------- Output & saves ----------
+ticker_group.head(TOP_N_COMPANIES := TOP_N_COMPANIES if 'TOP_N_COMPANIES' in globals() else 50)  # safety; variable defined earlier maybe
+# Save summary CSVs
+ticker_group.to_csv(OUT_TOP if 'OUT_TOP' in globals() else os.path.join(WORKDIR,"top_leveraged_companies.csv"), index=False)
+leg_stats.to_csv(OUT_SUMMARY if 'OUT_SUMMARY' in globals() else os.path.join(WORKDIR,"factor_leg_leverage_summary.csv"), index=False)
+overlap_matrix.to_csv(OUT_OVERLAP_MATRIX if 'OUT_OVERLAP_MATRIX' in globals() else os.path.join(WORKDIR,"factor_overlap_matrix.csv"))
+
+print("\n✅ Saved outputs:")
+print(" - Top companies (by leverage):", OUT_TOP if 'OUT_TOP' in globals() else os.path.join(WORKDIR,"top_leveraged_companies.csv"))
+print(" - Per-leg leverage summary:", OUT_SUMMARY if 'OUT_SUMMARY' in globals() else os.path.join(WORKDIR,"factor_leg_leverage_summary.csv"))
+print(" - Overlap matrix:", OUT_OVERLAP_MATRIX if 'OUT_OVERLAP_MATRIX' in globals() else os.path.join(WORKDIR,"factor_overlap_matrix.csv"))
+
+# ---------- Display quick tables ----------
+print("\n=== Top 20 companies by Max Leverage ===")
+display(ticker_group.head(20).style.format({"Max_Leverage":"{:.2f}", "Mean_Leverage":"{:.2f}"}))
+
+print("\n=== Factor Leg Average Leverage (top 20) ===")
+display(leg_stats.head(20).style.format({"Avg_Leverage":"{:.2f}", "Median_Leverage":"{:.2f}"}))
+
+# ---------- Visualizations ----------
+plt.rcParams.update({'figure.max_open_warning': 0})
+
+# 1) Bar chart: avg leverage per leg
+plt.figure(figsize=(10, max(4, 0.25*len(leg_stats))))
+plt.barh(leg_stats["Factor_Leg"], leg_stats["Avg_Leverage"], color='tab:orange', edgecolor='k')
+plt.xlabel("Average Leverage Score")
+plt.title("Average Leverage by Factor Leg")
+plt.gca().invert_yaxis()
+for i, v in enumerate(leg_stats["Avg_Leverage"]):
+    plt.text(v + max(leg_stats["Avg_Leverage"])*0.01, i, f"{v:.2f}", va='center')
+plt.tight_layout()
+plt.show()
+
+# 2) Overlap heatmap
+plt.figure(figsize=(8, 6))
+plt.imshow(overlap_matrix.values.astype(int), cmap="Blues", interpolation='nearest')
+plt.colorbar(label="Number of shared tickers")
+plt.xticks(range(len(legs)), legs, rotation=90)
+plt.yticks(range(len(legs)), legs)
+plt.title("Overlap Matrix: Shared Tickers Between Factor Legs")
+# annotate
+for i in range(len(legs)):
+    for j in range(len(legs)):
+        plt.text(j, i, str(overlap_matrix.iloc[i,j]), ha='center', va='center', color='black', fontsize=8)
+plt.tight_layout()
+plt.show()
+
+# 3) Histogram of leverage scores across all tickers
+plt.figure(figsize=(8,4))
+plt.hist(combined["Leverage_Score"], bins=40, color='steelblue', edgecolor='k', alpha=0.8)
+plt.xlabel("Leverage Score")
+plt.ylabel("Count")
+plt.title("Distribution of Leverage Scores (all factor legs)")
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# 4) Network graph (bipartite) for top leveraged companies and their legs
+TOP_NET = min(40, len(ticker_group))  # limit nodes for readability
+top_tickers = ticker_group.head(TOP_NET)["Ticker_norm"].tolist()
+G = nx.Graph()
+# add factor nodes and company nodes (prefix to avoid name clash)
+for leg in legs:
+    G.add_node(f"LEG::{leg}", bipartite=0, type='leg')
+for t in top_tickers:
+    G.add_node(f"COMP::{t}", bipartite=1, type='comp', leverage=float(ticker_group.loc[ticker_group["Ticker_norm"]==t, "Max_Leverage"].values[0]))
+
+# add edges only where top companies occur
+edges = []
+for leg in legs:
+    members_in_leg = leg_to_set[leg].intersection(set(top_tickers))
+    for t in members_in_leg:
+        edges.append((f"LEG::{leg}", f"COMP::{t}"))
+G.add_edges_from(edges)
+
+# layout and plot
+plt.figure(figsize=(12, 10))
+pos = nx.spring_layout(G, k=0.5, seed=42)  # layout
+leg_nodes = [n for n, d in G.nodes(data=True) if d.get('type')=='leg']
+comp_nodes = [n for n, d in G.nodes(data=True) if d.get('type')=='comp']
+# node sizes: legs fixed, comps scaled by leverage
+comp_sizes = [300 + 50*(G.nodes[n]['leverage']) for n in comp_nodes]
+nx.draw_networkx_nodes(G, pos, nodelist=leg_nodes, node_shape='s', node_color='lightgreen', node_size=700, label='Legs')
+nx.draw_networkx_nodes(G, pos, nodelist=comp_nodes, node_shape='o', node_color='salmon', node_size=comp_sizes, label='Companies')
+nx.draw_networkx_edges(G, pos, alpha=0.6)
+# labels: show leg label without prefix and company ticker
+labels = {n: (n.split("::")[1]) for n in G.nodes()}
+nx.draw_networkx_labels(G, pos, labels=labels, font_size=8)
+plt.title(f"Network: Top {len(top_tickers)} Leveraged Companies (size ~ leverage) and their Legs")
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+
+# ---------- Done ----------
+print("\n✅ Analysis complete. Outputs saved and charts displayed.")
+print(" - If you want the full merged long table, use the 'combined' DataFrame (rows = ticker occurrence per leg).")
+
+"""
+===========================================================
         Linking Factor Credit Sensitivity to Leverage
 ===========================================================
 
