@@ -1,5 +1,166 @@
 """
 ===========================================================
+  Factor Leg Leverage & Overlap Analysis (Final Refined)
+===========================================================
+
+Purpose:
+- Takes two Bloomberg-style CSVs:
+    1. factor_members.csv  -> columns = factor legs, rows = tickers
+    2. leverage_scores.csv -> columns = same factor legs, rows = leverage scores
+- Aligns them positionally and cleans duplicates
+- Outputs:
+    • Average & median leverage per factor leg (top + bottom)
+    • Most leveraged companies
+    • Least leveraged factor legs
+    • Clean overlap heatmap (top 15 overlapping)
+    • Bar charts for top & bottom leverage factors
+===========================================================
+"""
+
+import pandas as pd
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+
+# === Config ===
+WORKDIR = os.getcwd()
+MEMBERS_CSV = os.path.join(WORKDIR, "factor_members.csv")
+LEVERAGE_CSV = os.path.join(WORKDIR, "leverage_scores.csv")
+
+TOP_N_COMPANIES = 25
+TOP_N_LEGS = 15
+
+# === Load ===
+members = pd.read_csv(MEMBERS_CSV, dtype=str)
+leverage = pd.read_csv(LEVERAGE_CSV, dtype=str)
+
+# === Clean columns ===
+members.columns = members.columns.str.strip().str.upper().str.replace(r"[^A-Z0-9_]+", "", regex=True)
+leverage.columns = leverage.columns.str.strip().str.upper().str.replace(r"[^A-Z0-9_]+", "", regex=True)
+
+# Match common columns and ensure unique column names (remove duplicates like INDEX_1)
+members = members.loc[:, ~members.columns.duplicated()]
+leverage = leverage.loc[:, ~leverage.columns.duplicated()]
+
+common_cols = sorted(set(members.columns) & set(leverage.columns))
+members = members[common_cols].applymap(lambda x: x.strip() if isinstance(x, str) else x)
+leverage = leverage[common_cols].applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+# Align row counts
+max_rows = max(members.shape[0], leverage.shape[0])
+members = members.reindex(range(max_rows))
+leverage = leverage.reindex(range(max_rows))
+
+# === Stack and merge ===
+members_stack = members.stack().reset_index()
+members_stack.columns = ["row_idx", "Factor_Leg", "Ticker"]
+
+leverage_stack = leverage.stack().reset_index()
+leverage_stack.columns = ["row_idx", "Factor_Leg", "Leverage_Score"]
+
+df = pd.merge(members_stack, leverage_stack, on=["row_idx", "Factor_Leg"], how="left")
+
+df["Ticker"] = df["Ticker"].astype(str).str.upper().str.strip()
+df["Leverage_Score"] = pd.to_numeric(
+    df["Leverage_Score"].astype(str).str.replace(",", ""), errors="coerce"
+)
+df = df.dropna(subset=["Ticker", "Leverage_Score"])
+df["Factor_Leg"] = df["Factor_Leg"].str.strip().str.upper().str.replace(r"[^A-Z0-9_]+", "", regex=True)
+
+# === Compute summaries ===
+ticker_group = (
+    df.groupby("Ticker")
+    .agg(
+        Max_Leverage=("Leverage_Score", "max"),
+        Mean_Leverage=("Leverage_Score", "mean"),
+        Count_Legs=("Factor_Leg", "nunique"),
+        Legs=("Factor_Leg", lambda x: ", ".join(sorted(set(x))))
+    )
+    .reset_index()
+    .sort_values("Max_Leverage", ascending=False)
+)
+
+leg_stats = (
+    df.groupby("Factor_Leg")
+    .agg(
+        Avg_Leverage=("Leverage_Score", "mean"),
+        Median_Leverage=("Leverage_Score", "median"),
+        Count_Tickers=("Ticker", "nunique")
+    )
+    .reset_index()
+    .drop_duplicates(subset=["Factor_Leg"])
+)
+
+leg_stats = leg_stats.sort_values("Avg_Leverage", ascending=False).reset_index(drop=True)
+
+# === Overlap Matrix ===
+legs = sorted(df["Factor_Leg"].unique())
+leg_sets = {leg: set(df.loc[df["Factor_Leg"] == leg, "Ticker"]) for leg in legs}
+
+overlap = pd.DataFrame(index=legs, columns=legs, dtype=int)
+for a in legs:
+    for b in legs:
+        overlap.loc[a, b] = len(leg_sets[a].intersection(leg_sets[b])) if a != b else np.nan
+
+# Focus on top overlapping legs only
+top_legs = (
+    overlap.sum(axis=1)
+    .sort_values(ascending=False)
+    .head(TOP_N_LEGS)
+    .index.tolist()
+)
+overlap_top = overlap.loc[top_legs, top_legs]
+
+# === Visualisation 1: Top & Bottom Average Leverage Factors ===
+top_legs_df = leg_stats.head(10)
+bottom_legs_df = leg_stats.tail(10).sort_values("Avg_Leverage")
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+
+axes[0].barh(top_legs_df["Factor_Leg"], top_legs_df["Avg_Leverage"], color="tomato", edgecolor="k")
+axes[0].set_title("Top 10 Factors by Average Leverage")
+axes[0].invert_yaxis()
+axes[0].set_xlabel("Average Leverage Score")
+
+axes[1].barh(bottom_legs_df["Factor_Leg"], bottom_legs_df["Avg_Leverage"], color="lightblue", edgecolor="k")
+axes[1].set_title("Bottom 10 Factors by Average Leverage")
+axes[1].set_xlabel("Average Leverage Score")
+
+plt.tight_layout()
+plt.show()
+
+# === Visualisation 2: Overlap Heatmap ===
+plt.figure(figsize=(8, 6))
+plt.imshow(overlap_top.values, cmap="Blues", interpolation="nearest")
+plt.colorbar(label="Shared Companies")
+plt.xticks(range(len(top_legs)), top_legs, rotation=90)
+plt.yticks(range(len(top_legs)), top_legs)
+plt.title(f"Factor Overlap Matrix (Top {TOP_N_LEGS} Most Overlapping)")
+plt.tight_layout()
+plt.show()
+
+# === Visualisation 3: Top Leveraged Companies ===
+top_companies = ticker_group.head(TOP_N_COMPANIES)
+plt.figure(figsize=(10, max(5, 0.3 * TOP_N_COMPANIES)))
+plt.barh(top_companies["Ticker"], top_companies["Max_Leverage"], color="crimson", edgecolor="k")
+plt.xlabel("Max Leverage Score")
+plt.title(f"Top {TOP_N_COMPANIES} Most Leveraged Companies")
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
+
+# === Summary Tables ===
+print("\nTop 10 Highest-Leverage Factor Legs:\n")
+print(leg_stats.head(10).to_string(index=False, justify="center", formatters={"Avg_Leverage":"{:.2f}".format}))
+
+print("\nBottom 10 Lowest-Leverage Factor Legs:\n")
+print(leg_stats.tail(10).to_string(index=False, justify="center", formatters={"Avg_Leverage":"{:.2f}".format}))
+
+print("\nTop 10 Standout Leveraged Companies:\n")
+print(ticker_group.head(10).to_string(index=False))
+
+"""
+===========================================================
   Factor Leg Leverage & Overlap Analysis (Refined Version)
 ===========================================================
 
