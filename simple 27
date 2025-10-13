@@ -1,5 +1,136 @@
 """
 ===========================================================
+        Linking Factor Credit Sensitivity to Leverage
+===========================================================
+
+📊 GOAL:
+See if factors with higher credit betas (from your factor_credit_results.csv)
+also have higher average leverage exposure in their underlying names.
+
+===========================================================
+
+📂 REQUIRED FILES
+Place this notebook and these CSVs in the same folder:
+   Credit_Leverage_Link/
+   ├── Credit_Leverage_Link.ipynb
+   ├── factor_credit_results.csv      # from your previous regression script
+   ├── factor_members.csv             # factor basket constituents (see below)
+   └── leverage_scores.csv            # Bloomberg leverage data
+
+===========================================================
+
+📄 factor_members.csv
+-----------------------------------------------------------
+| Factor_Name | Ticker | Weight |
+|--------------|---------|--------|
+| VALUE_FAC    | AAPL US Equity | 0.025 |
+| VALUE_FAC    | MSFT US Equity | 0.030 |
+| MOMENTUM_FAC | META US Equity | 0.028 |
+| MOMENTUM_FAC | TSLA US Equity | 0.035 |
+
+✅ Export from Bloomberg:
+   - Use EQS <GO> or MEMB <GO> on each basket.
+   - Include Ticker, Weight, and the factor name (can be typed manually).
+
+===========================================================
+
+📄 leverage_scores.csv
+-----------------------------------------------------------
+| Ticker | Company_Name | FA_LEVERAGE_SCORE |
+|---------|---------------|------------------|
+| AAPL US Equity | Apple Inc | 32.5 |
+| MSFT US Equity | Microsoft Corp | 28.1 |
+| META US Equity | Meta Platforms | 61.7 |
+| TSLA US Equity | Tesla Inc | 73.2 |
+
+✅ Export from Bloomberg Excel Add-In:
+   Use =BDP("AAPL US Equity","FA_LEVERAGE_SCORE")
+   Or for batch =BDP(A2:A100,"FA_LEVERAGE_SCORE")
+
+===========================================================
+"""
+
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+from scipy.stats import linregress
+
+# === Load files ===
+folder = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+
+factor_credit_path = os.path.join(folder, "factor_credit_results.csv")
+members_path = os.path.join(folder, "factor_members.csv")
+leverage_path = os.path.join(folder, "leverage_scores.csv")
+
+factor_credit = pd.read_csv(factor_credit_path)
+members = pd.read_csv(members_path)
+leverage = pd.read_csv(leverage_path)
+
+# Clean up columns
+for df in [factor_credit, members, leverage]:
+    df.columns = df.columns.str.strip()
+
+# === Compute average leverage per factor ===
+merged = members.merge(leverage, on="Ticker", how="left")
+merged["Weighted_Leverage"] = merged["Weight"] * merged["FA_LEVERAGE_SCORE"]
+
+factor_leverage = (
+    merged.groupby("Factor_Name")
+    .apply(lambda x: (x["Weighted_Leverage"].sum() / x["Weight"].sum()))
+    .reset_index(name="Weighted_Avg_Leverage")
+)
+
+print("✅ Computed weighted leverage per factor basket:\n")
+print(factor_leverage.round(2))
+
+# === Merge leverage info with credit beta results ===
+# Keep only iTraxx Main betas for simplicity
+main_betas = factor_credit[factor_credit["Credit_Spread"] == "ITRX_MAIN"].copy()
+main_betas.rename(columns={"Beta": "Credit_Beta"}, inplace=True)
+
+merged_factors = main_betas.merge(factor_leverage, left_on="Factor", right_on="Factor_Name", how="left")
+
+# === Clean and prepare ===
+merged_factors = merged_factors[["Factor", "Credit_Beta", "R²", "Corr", "Weighted_Avg_Leverage"]].dropna()
+
+# === Check correlation between leverage and beta ===
+corr = merged_factors["Credit_Beta"].corr(merged_factors["Weighted_Avg_Leverage"])
+print(f"\n📈 Correlation between leverage exposure and credit beta: {corr:.2f}")
+
+# === Simple regression: does leverage explain credit beta? ===
+X = sm.add_constant(merged_factors["Weighted_Avg_Leverage"])
+y = merged_factors["Credit_Beta"]
+model = sm.OLS(y, X).fit()
+print("\n=== Regression: Credit Beta ~ Leverage Exposure ===")
+print(model.summary())
+
+# === Visualize relationship ===
+plt.figure(figsize=(7,5))
+plt.scatter(merged_factors["Weighted_Avg_Leverage"], merged_factors["Credit_Beta"], alpha=0.7, color="steelblue")
+slope, intercept, r, p, _ = linregress(merged_factors["Weighted_Avg_Leverage"], merged_factors["Credit_Beta"])
+plt.plot(merged_factors["Weighted_Avg_Leverage"], intercept + slope * merged_factors["Weighted_Avg_Leverage"],
+         color="crimson", linewidth=2, label=f"Fit: β={slope:.2f}, R²={r**2:.2f}")
+plt.xlabel("Weighted Avg Leverage Score (Factor Basket)")
+plt.ylabel("Credit Beta (iTraxx Main)")
+plt.title("Factor Credit Sensitivity vs Leverage Exposure")
+plt.legend()
+plt.grid(alpha=0.6, linestyle="--")
+plt.tight_layout()
+plt.show()
+
+# === Highlight top 5 leveraged and credit-sensitive factors ===
+top_linked = merged_factors.sort_values("Credit_Beta", ascending=False).head(5)
+print("\n=== 🔝 Top 5 Most Credit-Sensitive (and Levered) Factors ===")
+print(top_linked.round(3))
+
+# === Save summary ===
+output_file = os.path.join(folder, "credit_leverage_link.csv")
+merged_factors.to_csv(output_file, index=False)
+print(f"\n✅ Saved merged factor leverage and credit sensitivity summary to: {output_file}")
+
+"""
+===========================================================
   Factor vs Credit Spread Sensitivity Analysis (robust)
 ===========================================================
 
