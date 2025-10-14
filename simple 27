@@ -1,3 +1,135 @@
+import pandas as pd
+from datetime import datetime, timedelta
+import os
+
+# ---------- CONFIG ----------
+# Directory where your MSCI files live
+DATA_DIR = "."  # or specify your Faast storage path
+
+# Required columns
+REQUIRED_COLS = ["ticker", "company name", "change", "notional to trade", "comments", "conviction"]
+
+# ---------- HELPER FUNCTIONS ----------
+
+def load_and_clean(file_path):
+    """Load CSV and standardize column names."""
+    df = pd.read_csv(file_path)
+    df.columns = df.columns.str.strip().str.lower()
+
+    missing = [c for c in REQUIRED_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(f"{file_path} is missing columns: {missing}")
+
+    for col in REQUIRED_COLS:
+        if df[col].dtype == object:
+            df[col] = df[col].fillna("").astype(str).str.strip()
+    return df[REQUIRED_COLS]
+
+
+def compare_snapshots(df_yest, df_today):
+    """Compare two snapshots and return adds, deletes, and changes."""
+    y_tickers = set(df_yest["ticker"])
+    t_tickers = set(df_today["ticker"])
+
+    additions = df_today[df_today["ticker"].isin(t_tickers - y_tickers)]
+    deletions = df_yest[df_yest["ticker"].isin(y_tickers - t_tickers)]
+
+    # Common tickers for modifications
+    common_today = df_today[df_today["ticker"].isin(y_tickers & t_tickers)]
+    merged = common_today.merge(df_yest, on="ticker", suffixes=("_today", "_yest"))
+
+    changes = []
+    for _, row in merged.iterrows():
+        diffs = []
+        if row["notional to trade_today"] != row["notional to trade_yest"]:
+            diffs.append(
+                f"Notional {row['notional to trade_yest']} → {row['notional to trade_today']}"
+            )
+        if row["conviction_today"].lower() != row["conviction_yest"].lower():
+            diffs.append(
+                f"Conviction {row['conviction_yest']} → {row['conviction_today']}"
+            )
+        if row["comments_today"] != row["comments_yest"]:
+            diffs.append("Comments updated")
+        if diffs:
+            changes.append(
+                f"- {row['ticker']} ({row['company name_today']}): " + ", ".join(diffs)
+            )
+
+    # Watchlist summary
+    watchlist = df_today[df_today["conviction"].str.lower() == "watchlist"]
+
+    return additions, deletions, changes, watchlist
+
+
+def format_summary(region, additions, deletions, changes, watchlist):
+    """Format readable text summary."""
+    lines = [f"📊 {region} Summary"]
+
+    if not additions.empty:
+        lines.append("➕ Additions:")
+        for _, r in additions.iterrows():
+            lines.append(f"- {r['ticker']} ({r['company name']}): {r['change']}, Notional {r['notional to trade']}, Conviction: {r['conviction']}")
+    else:
+        lines.append("➕ Additions: None")
+
+    if not deletions.empty:
+        lines.append("➖ Deletions:")
+        for _, r in deletions.iterrows():
+            lines.append(f"- {r['ticker']} ({r['company name']})")
+    else:
+        lines.append("➖ Deletions: None")
+
+    if changes:
+        lines.append("🔁 Changes:")
+        lines.extend(changes)
+    else:
+        lines.append("🔁 Changes: None")
+
+    if not watchlist.empty:
+        lines.append("👀 Watchlist:")
+        for _, r in watchlist.iterrows():
+            lines.append(f"- {r['ticker']} ({r['company name']})")
+    else:
+        lines.append("👀 Watchlist: None")
+
+    lines.append("-" * 50)
+    return "\n".join(lines)
+
+
+def generate_daily_summary():
+    today = datetime.now()
+    yesterday = today - timedelta(days=1)
+
+    today_str = today.strftime("%Y%m%d")
+    yest_str = yesterday.strftime("%Y%m%d")
+
+    regions = ["EM", "DM"]
+    summaries = []
+
+    for region in regions:
+        today_file = os.path.join(DATA_DIR, f"{region}_{today_str}.csv")
+        yest_file = os.path.join(DATA_DIR, f"{region}_{yest_str}.csv")
+
+        if not os.path.exists(today_file) or not os.path.exists(yest_file):
+            summaries.append(f"⚠️ {region}: Missing files ({today_file} or {yest_file})\n" + "-" * 50)
+            continue
+
+        df_yest = load_and_clean(yest_file)
+        df_today = load_and_clean(today_file)
+
+        additions, deletions, changes, watchlist = compare_snapshots(df_yest, df_today)
+        summary_text = format_summary(region, additions, deletions, changes, watchlist)
+        summaries.append(summary_text)
+
+    full_summary = f"MSCI Daily Summary ({today.strftime('%d %b %Y')})\n\n" + "\n".join(summaries)
+    print(full_summary)
+    return full_summary
+
+
+if __name__ == "__main__":
+    generate_daily_summary()
+
 """
 ===========================================================
   Factor Leg Leverage Factor Score + Company Frequency Analysis
