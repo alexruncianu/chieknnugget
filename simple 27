@@ -1,4 +1,123 @@
 import pandas as pd
+from datetime import datetime
+
+# ---------- CONFIG ----------
+EM_YESTERDAY = "EM_20251013.csv"
+EM_TODAY = "EM_20251014.csv"
+DM_YESTERDAY = "DM_20251013.csv"
+DM_TODAY = "DM_20251014.csv"
+
+# Map columns: letter -> meaning
+COL_MAP = {
+    "A": "ticker",
+    "C": "company_name",
+    "D": "country",
+    "K": "change",
+    "M": "notional",
+    "O": "comments",
+    "P": "conviction"
+}
+
+# ---------- FUNCTIONS ----------
+
+def load_and_map(file_path):
+    """Load CSV and map specific columns to standard names."""
+    df = pd.read_csv(file_path, header=0)
+    df_mapped = pd.DataFrame()
+    for col_letter, name in COL_MAP.items():
+        idx = ord(col_letter.upper()) - ord('A')  # convert A->0, C->2, etc
+        if idx >= len(df.columns):
+            raise ValueError(f"{file_path} does not have column {col_letter}")
+        df_mapped[name] = df.iloc[:, idx].astype(str).str.strip()
+    return df_mapped
+
+def compare_snapshots(df_yest, df_today):
+    y_tickers = set(df_yest["ticker"])
+    t_tickers = set(df_today["ticker"])
+
+    additions = df_today[df_today["ticker"].isin(t_tickers - y_tickers)]
+    deletions = df_yest[df_yest["ticker"].isin(y_tickers - t_tickers)]
+
+    common_today = df_today[df_today["ticker"].isin(y_tickers & t_tickers)]
+    merged = common_today.merge(df_yest, on="ticker", suffixes=("_today", "_yest"))
+
+    changes = []
+    for _, row in merged.iterrows():
+        diffs = []
+        if row["notional_today"] != row["notional_yest"]:
+            diffs.append(f"Notional {row['notional_yest']} → {row['notional_today']}")
+        if row["conviction_today"].lower() != row["conviction_yest"].lower():
+            diffs.append(f"Conviction {row['conviction_yest']} → {row['conviction_today']}")
+        if row["comments_today"] != row["comments_yest"]:
+            diffs.append("Comments updated")
+        if diffs:
+            changes.append(f"- {row['ticker']} ({row['company_name_today']}, {row['country_today']}): " + ", ".join(diffs))
+
+    watchlist = df_today[df_today["conviction"].str.lower() == "watchlist"]
+
+    return additions, deletions, changes, watchlist
+
+def format_summary(region, additions, deletions, changes, watchlist):
+    lines = [f"{region} Summary"]
+
+    if not additions.empty:
+        lines.append("Additions:")
+        for _, r in additions.iterrows():
+            lines.append(f"- {r['ticker']} ({r['company_name']}, {r['country']}): {r['change']}, Notional {r['notional']}, Conviction: {r['conviction']}")
+    else:
+        lines.append("Additions: None")
+
+    if not deletions.empty:
+        lines.append("Deletions:")
+        for _, r in deletions.iterrows():
+            lines.append(f"- {r['ticker']} ({r['company_name']}, {r['country']})")
+    else:
+        lines.append("Deletions: None")
+
+    if changes:
+        lines.append("Changes:")
+        lines.extend(changes)
+    else:
+        lines.append("Changes: None")
+
+    if not watchlist.empty:
+        lines.append("Watchlist:")
+        for _, r in watchlist.iterrows():
+            lines.append(f"- {r['ticker']} ({r['company_name']}, {r['country']})")
+    else:
+        lines.append("Watchlist: None")
+
+    lines.append("-" * 50)
+    return "\n".join(lines)
+
+def generate_daily_summary():
+    today_str = datetime.now().strftime("%d %b %Y")
+
+    summaries = []
+
+    for region, y_file, t_file in [
+        ("EM", EM_YESTERDAY, EM_TODAY),
+        ("DM", DM_YESTERDAY, DM_TODAY)
+    ]:
+        try:
+            df_yest = load_and_map(y_file)
+            df_today = load_and_map(t_file)
+        except Exception as e:
+            summaries.append(f"{region} Error: {e}\n" + "-"*50)
+            continue
+
+        additions, deletions, changes, watchlist = compare_snapshots(df_yest, df_today)
+        summary_text = format_summary(region, additions, deletions, changes, watchlist)
+        summaries.append(summary_text)
+
+    full_summary = f"MSCI Daily Summary ({today_str})\n\n" + "\n".join(summaries)
+    print(full_summary)
+    return full_summary
+
+if __name__ == "__main__":
+    generate_daily_summary()
+
+import pandas as pd
 from datetime import datetime, timedelta
 import os
 
