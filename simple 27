@@ -3,6 +3,104 @@ import os
 from datetime import datetime
 
 # ---------- CONFIG ----------
+DATA_FOLDER = "."  # Folder containing daily files
+REGIONS = ["EM", "DM"]
+
+# Column mapping: Excel letter -> internal name
+COL_MAP = {
+    "A": "ticker",
+    "C": "company_name",
+    "D": "country",
+    "K": "change",
+    "M": "notional",
+    "O": "comments",
+    "P": "conviction"
+}
+
+# ---------- FUNCTIONS ----------
+
+def load_daily_file(file_path, region):
+    """Load a daily CSV, map columns, and filter out incomplete rows."""
+    df = pd.read_csv(file_path)
+    df_mapped = pd.DataFrame()
+    
+    # Map columns
+    for col_letter, name in COL_MAP.items():
+        idx = ord(col_letter.upper()) - ord('A')
+        if idx >= len(df.columns):
+            raise ValueError(f"{file_path} missing column {col_letter}")
+        df_mapped[name] = df.iloc[:, idx].astype(str).str.strip()
+    
+    # Drop rows with any missing values in key columns
+    key_cols = list(COL_MAP.values())
+    df_mapped = df_mapped.dropna(subset=key_cols)
+    df_mapped = df_mapped[(df_mapped[key_cols] != "").all(axis=1)]
+    
+    # Determine change_type
+    df_mapped["change_type"] = df_mapped.apply(
+        lambda row: "Watchlist" if row["conviction"].lower() == "watchlist" else row["change"], axis=1
+    )
+    
+    # Add date and region
+    date_str = os.path.basename(file_path).split("_")[1].split(".")[0]
+    file_date = datetime.strptime(date_str, "%Y%m%d").date()
+    df_mapped["date"] = file_date
+    df_mapped["region"] = region
+    
+    return df_mapped[["date", "region", "ticker", "company_name", "country", "notional", "comments", "conviction", "change_type"]]
+
+def build_master_table(data_folder):
+    """Read all files and build cumulative master table."""
+    all_data = []
+    for region in REGIONS:
+        files = [f for f in os.listdir(data_folder) if f.startswith(region) and f.endswith(".csv")]
+        for f in sorted(files):
+            file_path = os.path.join(data_folder, f)
+            try:
+                df = load_daily_file(file_path, region)
+                all_data.append(df)
+            except Exception as e:
+                print(f"Error processing {file_path}: {e}")
+    
+    if all_data:
+        master_df = pd.concat(all_data, ignore_index=True)
+        return master_df
+    else:
+        return pd.DataFrame()
+
+def create_daily_summary(master_df):
+    """Create a pivot table showing adds/deletes/watchlist over time."""
+    pivot = master_df.pivot_table(
+        index=["region", "ticker", "company_name", "country"],
+        columns="date",
+        values="change_type",
+        aggfunc='first'
+    ).fillna("")
+    
+    pivot = pivot.sort_values(by=["region", "ticker"])
+    return pivot
+
+def save_summary_table(pivot_df, output_csv="msci_changes_over_time.csv", output_excel="msci_changes_over_time.xlsx"):
+    pivot_df.to_csv(output_csv)
+    pivot_df.to_excel(output_excel)
+    print(f"Saved cumulative table to {output_csv} and {output_excel}")
+
+# ---------- MAIN ----------
+if __name__ == "__main__":
+    master_df = build_master_table(DATA_FOLDER)
+    if master_df.empty:
+        print("No valid daily files found.")
+    else:
+        pivot_table = create_daily_summary(master_df)
+        print(pivot_table)
+        save_summary_table(pivot_table)
+
+
+import pandas as pd
+import os
+from datetime import datetime
+
+# ---------- CONFIG ----------
 # Folder where daily files will be stored
 DATA_FOLDER = "."  # adjust to your folder
 REGIONS = ["EM", "DM"]
