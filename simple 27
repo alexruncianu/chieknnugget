@@ -2,6 +2,83 @@ import pandas as pd
 from datetime import datetime
 
 # ---------- CONFIG ----------
+# Just today's file
+EM_TODAY = "EM_20251014.csv"
+DM_TODAY = "DM_20251014.csv"
+
+# Map columns by Excel letter
+COL_MAP = {
+    "A": "ticker",
+    "C": "company_name",
+    "D": "country",
+    "K": "change",
+    "M": "notional",
+    "O": "comments",
+    "P": "conviction"
+}
+
+# ---------- FUNCTIONS ----------
+
+def load_and_map(file_path):
+    """Load CSV and map specific columns to standard names."""
+    df = pd.read_csv(file_path)
+    df_mapped = pd.DataFrame()
+    for col_letter, name in COL_MAP.items():
+        idx = ord(col_letter.upper()) - ord('A')
+        if idx >= len(df.columns):
+            raise ValueError(f"{file_path} missing column {col_letter}")
+        df_mapped[name] = df.iloc[:, idx].astype(str).str.strip()
+    return df_mapped
+
+def generate_summary(df):
+    """Generate summary using change column and conviction."""
+    summary_df = df.copy()
+    
+    # If conviction == watchlist, override change type
+    summary_df["change_type"] = summary_df.apply(
+        lambda row: "Watchlist" if row["conviction"].lower() == "watchlist" else row["change"], axis=1
+    )
+    
+    # Keep key columns + change_type
+    summary_df = summary_df[["ticker", "company_name", "country", "notional", "comments", "conviction", "change_type"]]
+    return summary_df
+
+def format_summary_text(region, summary_df):
+    if summary_df.empty:
+        return f"{region} Summary\nNo changes today.\n" + "-"*50
+
+    lines = [f"{region} Summary"]
+    for _, r in summary_df.iterrows():
+        lines.append(f"- {r['ticker']} ({r['company_name']}, {r['country']}): {r['change_type']}, Notional: {r['notional']}, Conviction: {r['conviction']}, Comments: {r['comments']}")
+    lines.append("-"*50)
+    return "\n".join(lines)
+
+def generate_daily_summary():
+    today_str = datetime.now().strftime("%d %b %Y")
+    summaries = []
+
+    for region, file in [("EM", EM_TODAY), ("DM", DM_TODAY)]:
+        try:
+            df = load_and_map(file)
+        except Exception as e:
+            summaries.append(f"{region} Error: {e}\n" + "-"*50)
+            continue
+
+        summary_df = generate_summary(df)
+        text = format_summary_text(region, summary_df)
+        summaries.append(text)
+
+    full_summary = f"MSCI Daily Summary ({today_str})\n\n" + "\n".join(summaries)
+    print(full_summary)
+    return full_summary
+
+if __name__ == "__main__":
+    generate_daily_summary()
+
+import pandas as pd
+from datetime import datetime
+
+# ---------- CONFIG ----------
 EM_YESTERDAY = "EM_20251013.csv"
 EM_TODAY = "EM_20251014.csv"
 DM_YESTERDAY = "DM_20251013.csv"
