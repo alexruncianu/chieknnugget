@@ -1,3 +1,115 @@
+import pandas as pd
+import os
+from datetime import datetime
+
+# ---------- CONFIG ----------
+DATA_FOLDER = "."  # folder containing EM_YYYYMMDD.csv, DM_YYYYMMDD.csv files
+REGIONS = ["EM", "DM"]
+
+# Excel column map → internal names
+COL_MAP = {
+    "A": "ticker",
+    "C": "company_name",
+    "D": "country",
+    "K": "change",
+    "M": "notional",     # Notional to trade (MUST be filled)
+    "O": "comments",
+    "P": "conviction"
+}
+
+# ---------- FUNCTIONS ----------
+
+def load_daily_file(file_path, region):
+    """Load one day's file, clean and standardize it."""
+    df = pd.read_csv(file_path)
+    df_mapped = pd.DataFrame()
+
+    # Map columns by Excel letter
+    for col_letter, name in COL_MAP.items():
+        idx = ord(col_letter.upper()) - ord('A')
+        if idx >= len(df.columns):
+            raise ValueError(f"{file_path} missing column {col_letter}")
+        df_mapped[name] = df.iloc[:, idx]
+
+    # Convert everything to string and strip whitespace
+    df_mapped = df_mapped.astype(str).apply(lambda col: col.str.strip())
+
+    # Replace "nan", "NaN", empty strings, or missing values with actual NaN
+    df_mapped = df_mapped.replace(["nan", "NaN", "None", "", " "], pd.NA)
+
+    # Drop any rows missing ANY of the key fields (especially notional)
+    key_cols = list(COL_MAP.values())
+    df_mapped = df_mapped.dropna(subset=key_cols)
+
+    # Determine change type
+    df_mapped["change_type"] = df_mapped.apply(
+        lambda row: "Watchlist" if isinstance(row["conviction"], str) and row["conviction"].lower() == "watchlist"
+        else row["change"],
+        axis=1
+    )
+
+    # Extract date from filename
+    date_str = os.path.basename(file_path).split("_")[1].split(".")[0]
+    file_date = datetime.strptime(date_str, "%Y%m%d").date()
+    df_mapped["date"] = file_date
+    df_mapped["region"] = region
+
+    # Only keep clean, relevant columns
+    return df_mapped[["date", "region", "ticker", "company_name", "country", "notional", "comments", "conviction", "change_type"]]
+
+
+def build_master_table(data_folder):
+    """Combine all EM/DM files into a clean master dataset."""
+    all_data = []
+    for region in REGIONS:
+        files = [f for f in os.listdir(data_folder) if f.startswith(region) and f.endswith(".csv")]
+        for f in sorted(files):
+            file_path = os.path.join(data_folder, f)
+            try:
+                df = load_daily_file(file_path, region)
+                if not df.empty:
+                    all_data.append(df)
+            except Exception as e:
+                print(f"⚠️ Error processing {file_path}: {e}")
+
+    if all_data:
+        master_df = pd.concat(all_data, ignore_index=True)
+        return master_df
+    else:
+        return pd.DataFrame()
+
+
+def create_pivot_table(master_df):
+    """Show add/delete/watchlist per stock over time."""
+    pivot = master_df.pivot_table(
+        index=["region", "ticker", "company_name", "country", "notional"],
+        columns="date",
+        values="change_type",
+        aggfunc="first"
+    ).fillna("")
+
+    pivot = pivot.sort_values(by=["region", "ticker"])
+    return pivot
+
+
+def save_summary(pivot_df, output_csv="msci_changes_over_time.csv", output_excel="msci_changes_over_time.xlsx"):
+    pivot_df.to_csv(output_csv)
+    pivot_df.to_excel(output_excel)
+    print(f"✅ Saved summary tables:\n- {output_csv}\n- {output_excel}")
+
+
+# ---------- MAIN ----------
+if __name__ == "__main__":
+    master_df = build_master_table(DATA_FOLDER)
+    if master_df.empty:
+        print("⚠️ No valid or complete daily files found (missing key info or notional).")
+    else:
+        print(f"✅ Loaded {len(master_df)} clean rows from all files.")
+        pivot_df = create_pivot_table(master_df)
+        save_summary(pivot_df)
+        print("\n📊 Preview:")
+        print(pivot_df.head(20))
+
 
 import pandas as pd
 import os
