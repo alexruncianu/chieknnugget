@@ -1,4 +1,146 @@
 # -------------------------------------------------------
+# EMEA Basket Notional Time Series Analysis (Robust Version)
+# -------------------------------------------------------
+
+import pandas as pd
+import glob
+import matplotlib.pyplot as plt
+import os
+
+# ----------------------------
+# CONFIGURATION
+# ----------------------------
+
+# Folder containing your daily CSVs
+DATA_FOLDER = "data/positions/"   # <-- Change to your folder path
+TOP_N_TICKERS = 10                # Number of tickers to show in chart (set None to show all)
+
+# ----------------------------
+# STEP 1: LOAD AND COMBINE CSV FILES (ROBUST)
+# ----------------------------
+
+files = glob.glob(os.path.join(DATA_FOLDER, "*.csv"))
+
+if not files:
+    raise FileNotFoundError(f"No CSV files found in folder: {DATA_FOLDER}")
+
+df_list = []
+error_log = []
+
+for f in files:
+    try:
+        # Read CSV, skip bad lines that cause tokenizing errors
+        temp = pd.read_csv(f, on_bad_lines='skip', engine='python')
+        temp['source_file'] = os.path.basename(f)
+        df_list.append(temp)
+    except Exception as e:
+        print(f"❌ Error reading {f}: {e}")
+        error_log.append({"file": f, "error": str(e)})
+
+if not df_list:
+    raise ValueError("No valid CSVs were read successfully. Check data folder and file formats.")
+
+df = pd.concat(df_list, ignore_index=True)
+
+print(f"✅ Loaded {len(files)} files with {len(df)} total rows after cleaning.")
+if error_log:
+    print(f"⚠️ Skipped {len(error_log)} file(s) due to read errors.")
+
+# ----------------------------
+# STEP 2: CLEAN & FILTER DATA
+# ----------------------------
+
+# Normalize column names
+df.columns = df.columns.str.lower().str.strip()
+
+# Validate columns
+required_cols = ['date', 'region', 'bloomberg_ticker', 'total_basket_notional']
+for col in required_cols:
+    if col not in df.columns:
+        raise ValueError(f"Missing required column '{col}' in CSV files. Found columns: {df.columns.tolist()}")
+
+# Convert date
+df['date'] = pd.to_datetime(df['date'], errors='coerce')
+
+# Drop rows with missing or invalid dates
+df = df.dropna(subset=['date'])
+
+# Filter EMEA region
+df = df[df['region'].astype(str).str.upper() == 'EMEA']
+
+# Drop empty or invalid notional rows
+df = df.dropna(subset=['total_basket_notional'])
+df['total_basket_notional'] = pd.to_numeric(df['total_basket_notional'], errors='coerce')
+df = df.dropna(subset=['total_basket_notional'])
+
+print(f"📊 After filtering: {len(df)} valid EMEA rows remain.")
+
+# ----------------------------
+# STEP 3: GROUP & AGGREGATE
+# ----------------------------
+
+summary = (
+    df.groupby(['date', 'bloomberg_ticker'])['total_basket_notional']
+      .sum()
+      .reset_index()
+)
+
+# ----------------------------
+# STEP 4: OPTIONAL — FILTER TOP N TICKERS BY TOTAL NOTIONAL
+# ----------------------------
+
+if TOP_N_TICKERS is not None:
+    top_tickers = (
+        summary.groupby('bloomberg_ticker')['total_basket_notional']
+        .sum()
+        .nlargest(TOP_N_TICKERS)
+        .index
+    )
+    summary = summary[summary['bloomberg_ticker'].isin(top_tickers)]
+    print(f"📈 Showing top {len(top_tickers)} tickers by total notional.")
+
+# ----------------------------
+# STEP 5: PIVOT FOR TIME SERIES VIEW
+# ----------------------------
+
+pivot_df = (
+    summary
+    .pivot(index='date', columns='bloomberg_ticker', values='total_basket_notional')
+    .fillna(0)
+    .sort_index()
+)
+
+# ----------------------------
+# STEP 6: PLOT RESULTS
+# ----------------------------
+
+plt.figure(figsize=(12, 6))
+pivot_df.plot(ax=plt.gca())
+
+plt.title("EMEA Region — Total Basket Notional by Bloomberg Ticker Over Time", fontsize=14)
+plt.xlabel("Date", fontsize=12)
+plt.ylabel("Total Basket Notional", fontsize=12)
+plt.legend(title="Bloomberg Ticker", bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# ----------------------------
+# STEP 7: EXPORT RESULTS (Optional)
+# ----------------------------
+
+output_path = "emea_basket_notional_timeseries.csv"
+pivot_df.to_csv(output_path)
+print(f"💾 Aggregated time series saved to: {output_path}")
+
+# Optional: save log of skipped files
+if error_log:
+    error_log_df = pd.DataFrame(error_log)
+    error_log_df.to_csv("error_log.csv", index=False)
+    print("🧾 Error log saved to: error_log.csv")
+
+
+# -------------------------------------------------------
 # EMEA Basket Notional Time Series Analysis
 # -------------------------------------------------------
 
