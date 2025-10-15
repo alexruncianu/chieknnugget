@@ -1,0 +1,114 @@
+# -------------------------------------------------------
+# EMEA Basket Notional Time Series Analysis
+# -------------------------------------------------------
+
+import pandas as pd
+import glob
+import matplotlib.pyplot as plt
+import os
+
+# ----------------------------
+# CONFIGURATION
+# ----------------------------
+
+# Folder containing your daily CSVs
+DATA_FOLDER = "data/positions/"   # <-- Change to your folder path
+TOP_N_TICKERS = 10                # Number of tickers to show in chart (set None to show all)
+
+# ----------------------------
+# STEP 1: LOAD AND COMBINE CSV FILES
+# ----------------------------
+
+# Find all CSV files in the folder
+files = glob.glob(os.path.join(DATA_FOLDER, "*.csv"))
+
+if not files:
+    raise FileNotFoundError(f"No CSV files found in folder: {DATA_FOLDER}")
+
+# Load and concatenate all CSVs
+df_list = []
+for f in files:
+    temp = pd.read_csv(f)
+    df_list.append(temp)
+
+df = pd.concat(df_list, ignore_index=True)
+
+print(f"✅ Loaded {len(files)} files with {len(df)} total rows.")
+
+# ----------------------------
+# STEP 2: CLEAN & FILTER DATA
+# ----------------------------
+
+# Convert date column to datetime
+df['date'] = pd.to_datetime(df['date'], errors='coerce')
+
+# Drop rows with missing dates
+df = df.dropna(subset=['date'])
+
+# Ensure column names are consistent (handle potential casing issues)
+df.columns = df.columns.str.lower().str.strip()
+
+# Filter only EMEA region
+df = df[df['region'].str.upper() == 'EMEA']
+
+# Check column existence
+required_cols = ['date', 'bloomberg_ticker', 'total_basket_notional']
+for col in required_cols:
+    if col not in df.columns:
+        raise ValueError(f"Column '{col}' not found in the CSV files. Found columns: {df.columns.tolist()}")
+
+# ----------------------------
+# STEP 3: GROUP & AGGREGATE
+# ----------------------------
+
+summary = (
+    df.groupby(['date', 'bloomberg_ticker'])['total_basket_notional']
+      .sum()
+      .reset_index()
+)
+
+# ----------------------------
+# STEP 4: OPTIONAL — FILTER TOP N TICKERS BY TOTAL NOTIONAL
+# ----------------------------
+
+if TOP_N_TICKERS is not None:
+    top_tickers = (
+        summary.groupby('bloomberg_ticker')['total_basket_notional']
+        .sum()
+        .nlargest(TOP_N_TICKERS)
+        .index
+    )
+    summary = summary[summary['bloomberg_ticker'].isin(top_tickers)]
+
+# ----------------------------
+# STEP 5: PIVOT FOR TIME SERIES VIEW
+# ----------------------------
+
+pivot_df = summary.pivot(index='date', columns='bloomberg_ticker', values='total_basket_notional').fillna(0)
+
+# Sort by date
+pivot_df = pivot_df.sort_index()
+
+# ----------------------------
+# STEP 6: PLOT RESULTS
+# ----------------------------
+
+plt.figure(figsize=(12, 6))
+pivot_df.plot(ax=plt.gca())
+
+plt.title("EMEA Region — Total Basket Notional by Bloomberg Ticker Over Time", fontsize=14)
+plt.xlabel("Date", fontsize=12)
+plt.ylabel("Total Basket Notional", fontsize=12)
+plt.legend(title="Bloomberg Ticker", bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# ----------------------------
+# STEP 7: EXPORT RESULTS (Optional)
+# ----------------------------
+
+# Save aggregated data for further analysis
+output_path = "emea_basket_notional_timeseries.csv"
+pivot_df.to_csv(output_path)
+print(f"📁 Aggregated time series saved to: {output_path}")
