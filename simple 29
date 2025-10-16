@@ -1,6 +1,102 @@
 
 
 
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load CSV
+file_path = "your_file.csv"
+df = pd.read_csv(file_path)
+
+# Clean and sort
+df.columns = df.columns.str.strip()
+df['CoB'] = pd.to_datetime(df['CoB'], dayfirst=True)
+df = df.sort_values(by='CoB')
+
+# 1. Total Daily PnL (all books combined)
+plt.figure(figsize=(12,6))
+total_daily = df.groupby('CoB')['DailyPL'].sum()
+plt.plot(total_daily.index, total_daily.values, marker='o', linewidth=2)
+plt.title('Total Daily PnL Over Time')
+plt.xlabel('Date (CoB)')
+plt.ylabel('Daily PnL')
+plt.grid(True)
+plt.show()
+
+# 2. Daily PnL by Book
+plt.figure(figsize=(12,6))
+for book, sub_df in df.groupby('BookName'):
+    plt.plot(sub_df['CoB'], sub_df['DailyPL'], marker='o', label=book)
+plt.title('Daily PnL by Book')
+plt.xlabel('Date (CoB)')
+plt.ylabel('Daily PnL')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 3. Pivot daily data and compute cumulative
+daily_pnl = df.pivot(index='CoB', columns='BookName', values='DailyPL')
+
+# Handle missing books
+for col in ['GXC', 'ZSB']:
+    if col not in daily_pnl.columns:
+        daily_pnl[col] = 0
+
+daily_pnl = daily_pnl[['GXC', 'ZSB']]
+
+# Compute cumulative (running total)
+cumulative_pnl = daily_pnl.cumsum()
+
+# Compute total cumulative across books
+cumulative_pnl['Total'] = cumulative_pnl['GXC'] + cumulative_pnl['ZSB']
+
+# Normalized cumulative (to compare performance shape)
+normalized_pnl = cumulative_pnl / cumulative_pnl.iloc[-1].replace(0, 1)
+
+# 4. Plot raw cumulative
+plt.figure(figsize=(12,6))
+for col in ['GXC', 'ZSB', 'Total']:
+    plt.plot(cumulative_pnl.index, cumulative_pnl[col], linewidth=2, label=f"{col} Cumulative")
+plt.title('Cumulative PnL Over Time (Running Total)')
+plt.xlabel('Date (CoB)')
+plt.ylabel('Cumulative PnL')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 5. Plot normalized cumulative
+plt.figure(figsize=(12,6))
+for col in ['GXC', 'ZSB']:
+    plt.plot(normalized_pnl.index, normalized_pnl[col], linewidth=2, label=f"{col} Normalized")
+plt.title('Normalized Cumulative PnL (Relative Performance)')
+plt.xlabel('Date (CoB)')
+plt.ylabel('Normalized Value (Rebased)')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 6. Combine daily and cumulative into a table
+combined_df = pd.concat([
+    daily_pnl.add_suffix('_DailyPL'),
+    cumulative_pnl.add_suffix('_CumulativePL')
+], axis=1)
+
+# Add total row
+total_row = pd.DataFrame({
+    'GXC_DailyPL': [daily_pnl['GXC'].sum()],
+    'ZSB_DailyPL': [daily_pnl['ZSB'].sum()],
+    'Total_DailyPL': [daily_pnl['GXC'].sum() + daily_pnl['ZSB'].sum()],
+    'GXC_CumulativePL': [cumulative_pnl['GXC'].iloc[-1]],
+    'ZSB_CumulativePL': [cumulative_pnl['ZSB'].iloc[-1]],
+    'Total_CumulativePL': [cumulative_pnl['Total'].iloc[-1]]
+}, index=['Total'])
+
+final_df = pd.concat([combined_df, total_row])
+
+# Display final table
+display(final_df)
+
+
 
 
 import pandas as pd
