@@ -7,6 +7,79 @@ file_path = "your_file.csv"
 df = pd.read_csv(file_path)
 
 # Ensure correct types
+df.columns = df.columns.str.strip()  # remove any whitespace
+df['CoB'] = pd.to_datetime(df['CoB'], dayfirst=True)
+df = df.sort_values(by='CoB')
+
+# 1. Total Daily PnL (all books combined)
+plt.figure(figsize=(12,6))
+total_daily = df.groupby('CoB')['DailyPL'].sum()
+plt.plot(total_daily.index, total_daily.values, marker='o', linewidth=2)
+plt.title('Total Daily PnL Over Time')
+plt.xlabel('Date (CoB)')
+plt.ylabel('Daily PnL')
+plt.grid(True)
+plt.show()
+
+# 2. Daily PnL by Book
+plt.figure(figsize=(12,6))
+for book, sub_df in df.groupby('BookName'):
+    plt.plot(sub_df['CoB'], sub_df['DailyPL'], marker='o', label=book)
+plt.title('Daily PnL by Book')
+plt.xlabel('Date (CoB)')
+plt.ylabel('Daily PnL')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 3. Cumulative PnL per Book (start at 0)
+plt.figure(figsize=(12,6))
+for book, sub_df in df.groupby('BookName'):
+    cumulative = sub_df['DailyPL'].cumsum()
+    cumulative = cumulative - cumulative.iloc[0]  # start at 0
+    plt.plot(sub_df['CoB'], cumulative, linewidth=2, label=f"{book} (Cumulative)")
+plt.title('Cumulative PnL by Book (Start at 0)')
+plt.xlabel('Date (CoB)')
+plt.ylabel('Cumulative PnL')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 4. Create simplified dataframe with GXC and ZSB
+
+# Pivot daily PnL
+daily_pnl = df.pivot(index='CoB', columns='BookName', values='DailyPL')[['GXC', 'ZSB']]
+
+# Pivot cumulative PnL (starting at 0)
+cumulative_pnl = df.groupby('BookName').apply(lambda x: x.set_index('CoB')['DailyPL'].cumsum())
+cumulative_pnl = cumulative_pnl.unstack(level=0)[['GXC', 'ZSB']]
+cumulative_pnl = cumulative_pnl - cumulative_pnl.iloc[0]  # start at 0
+
+# Combine into a single dataframe
+combined_df = pd.concat([daily_pnl.add_suffix('_DailyPL'), cumulative_pnl.add_suffix('_CumulativePL')], axis=1)
+
+# 5. Add total PnL for each book as a summary row
+total_row = pd.DataFrame({
+    'GXC_DailyPL': [daily_pnl['GXC'].sum()],
+    'ZSB_DailyPL': [daily_pnl['ZSB'].sum()],
+    'GXC_CumulativePL': [cumulative_pnl['GXC'].iloc[-1]],
+    'ZSB_CumulativePL': [cumulative_pnl['ZSB'].iloc[-1]],
+}, index=['Total'])
+
+# Append total row to dataframe
+final_df = pd.concat([combined_df, total_row])
+
+# Display the simplified dataframe with totals
+display(final_df)
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load CSV
+file_path = "your_file.csv"
+df = pd.read_csv(file_path)
+
+# Ensure correct types
 df['CoB'] = pd.to_datetime(df['CoB'], dayfirst=True)
 df = df.sort_values(by='CoB')
 
