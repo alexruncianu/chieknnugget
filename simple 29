@@ -1,5 +1,97 @@
 
 
+# Import libraries
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load CSV data
+file_path = "your_file.csv"
+
+# Try UTF-8 first, fallback if needed
+try:
+    df = pd.read_csv(file_path, encoding='utf-8')
+except UnicodeDecodeError:
+    df = pd.read_csv(file_path, encoding='ISO-8859-1')
+
+# Clean column names (remove hidden spaces)
+df.columns = df.columns.str.strip()
+
+# Convert CoB to datetime
+df['CoB'] = pd.to_datetime(df['CoB'], errors='coerce')
+df = df.dropna(subset=['CoB'])
+df = df.sort_values(by='CoB')
+
+# Clean DailyPL column:
+# Remove spaces, commas, currency symbols, etc.
+df['DailyPL'] = (
+    df['DailyPL']
+    .astype(str)
+    .str.replace(',', '', regex=False)
+    .str.replace('£', '', regex=False)
+    .str.replace('$', '', regex=False)
+    .str.replace('€', '', regex=False)
+    .str.replace('−', '-', regex=False)  # handle unicode minus sign
+    .str.replace(' ', '', regex=False)   # remove spaces
+)
+
+# Convert to numeric (coerce errors to NaN)
+df['DailyPL'] = pd.to_numeric(df['DailyPL'], errors='coerce')
+df = df.dropna(subset=['DailyPL'])
+
+# Inspect cleaned data
+print("Sample of cleaned data:")
+print(df.head(), "\n")
+
+# 1. Total Daily PnL (all books combined)
+plt.figure(figsize=(12, 6))
+df.groupby('CoB')['DailyPL'].sum().plot(marker='o', linewidth=2)
+plt.title('Total Daily PnL Over Time', fontsize=14)
+plt.xlabel('Date (CoB)')
+plt.ylabel('Daily PnL')
+plt.grid(True)
+plt.show()
+
+# 2. Daily PnL by Book
+plt.figure(figsize=(12, 6))
+for book_name, sub_df in df.groupby('BookName'):
+    plt.plot(sub_df['CoB'], sub_df['DailyPL'], marker='o', label=book_name)
+
+plt.title('Daily PnL by Book', fontsize=14)
+plt.xlabel('Date (CoB)')
+plt.ylabel('Daily PnL')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 3. 7-Day Rolling Average per Book
+df['Rolling7d'] = df.groupby('BookName')['DailyPL'].transform(lambda x: x.rolling(7).mean())
+
+plt.figure(figsize=(12, 6))
+for book_name, sub_df in df.groupby('BookName'):
+    plt.plot(sub_df['CoB'], sub_df['Rolling7d'], linewidth=2, label=f"{book_name} (7d avg)")
+
+plt.title('7-Day Rolling Average PnL by Book', fontsize=14)
+plt.xlabel('Date (CoB)')
+plt.ylabel('7-Day Average PnL')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 4. Cumulative PnL per Book
+df['CumulativePL'] = df.groupby('BookName')['DailyPL'].cumsum()
+
+plt.figure(figsize=(12, 6))
+for book_name, sub_df in df.groupby('BookName'):
+    plt.plot(sub_df['CoB'], sub_df['CumulativePL'], linewidth=2, label=f"{book_name} (Cumulative)")
+
+plt.title('Cumulative PnL by Book', fontsize=14)
+plt.xlabel('Date (CoB)')
+plt.ylabel('Cumulative PnL')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+
 
 # Import libraries
 import pandas as pd
