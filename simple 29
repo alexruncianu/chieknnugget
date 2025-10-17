@@ -1,4 +1,188 @@
 
+import pandas as pd
+import glob
+import matplotlib.pyplot as plt
+import os
+from datetime import datetime
+
+# ----------------------------
+# CONFIGURATION
+# ----------------------------
+
+DATA_FOLDER = "data/positions/"   # Folder containing daily CSVs
+USE_LOG_SCALE = True              # Makes visual clearer if notional varies widely
+SHOW_PER_THEME_CHARTS = False     # Optional: one chart per theme
+
+# Map last 4-letter codes to readable theme names
+THEME_MAP = {
+    "GRID": "Clean Energy Grid",
+    "DEFE": "Defence",
+    "GINF": "German Infra",
+    "PHRM": "Pharma",
+    "UKDM": "UK Domestic",
+    "UKCS": "UK Consumer",
+    "CYCL": "Cyclicals"
+}
+
+TARGET_THEMES = list(THEME_MAP.keys())
+
+# ----------------------------
+# STEP 1: LOAD AND COMBINE CSV FILES (ROBUST)
+# ----------------------------
+
+files = glob.glob(os.path.join(DATA_FOLDER, "*.csv"))
+if not files:
+    raise FileNotFoundError(f"No CSV files found in folder: {DATA_FOLDER}")
+
+df_list = []
+error_log = []
+
+for f in files:
+    try:
+        temp = pd.read_csv(f, on_bad_lines='skip', engine='python')
+        temp['source_file'] = os.path.basename(f)
+        df_list.append(temp)
+    except Exception as e:
+        print(f"Error reading {f}: {e}")
+        error_log.append({"file": f, "error": str(e)})
+
+if not df_list:
+    raise ValueError("No valid CSVs were read successfully. Check data folder and file formats.")
+
+df = pd.concat(df_list, ignore_index=True)
+print(f"Loaded {len(files)} files with {len(df)} total rows after cleaning.")
+if error_log:
+    print(f"Skipped {len(error_log)} file(s) due to read errors.")
+
+# ----------------------------
+# STEP 2: CLEAN & FILTER DATA
+# ----------------------------
+
+df.columns = df.columns.str.lower().str.strip()
+
+required_cols = ['date', 'region', 'bloomberg_ticker', 'total_basket_notional']
+for col in required_cols:
+    if col not in df.columns:
+        raise ValueError(f"Missing required column '{col}' in CSV files. Found columns: {df.columns.tolist()}")
+
+# Robust date parsing
+def safe_parse_date(x):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y%m%d"):
+        try:
+            return datetime.strptime(str(x), fmt)
+        except Exception:
+            continue
+    return pd.NaT
+
+df['date'] = df['date'].apply(safe_parse_date)
+df = df.dropna(subset=['date'])
+
+# Region and notional cleaning
+df = df[df['region'].astype(str).str.upper() == 'EMEA']
+df = df.dropna(subset=['total_basket_notional'])
+df['total_basket_notional'] = pd.to_numeric(df['total_basket_notional'], errors='coerce')
+df = df.dropna(subset=['total_basket_notional'])
+
+print(f"After filtering: {len(df)} valid EMEA rows remain.")
+
+# ----------------------------
+# STEP 3: ADD THEME COLUMN (LAST 4 CHARACTERS)
+# ----------------------------
+
+df_valid_length = df[df['bloomberg_ticker'].astype(str).str.len() == 8]
+df_valid_length['theme_code'] = df_valid_length['bloomberg_ticker'].astype(str).str[-4:].str.upper()
+df_valid_length['theme'] = df_valid_length['theme_code'].map(THEME_MAP)
+
+# Filter for selected themes
+df_selected = df_valid_length[df_valid_length['theme_code'].isin(TARGET_THEMES)]
+
+if df_selected.empty:
+    raise ValueError("No data found for the specified themes. Check theme codes or CSV content.")
+
+print(f"Tracking {len(TARGET_THEMES)} selected themes across {df_selected['date'].nunique()} dates.")
+
+# ----------------------------
+# STEP 4: AGGREGATE BY THEME OVER TIME
+# ----------------------------
+
+summary_themes = (
+    df_selected.groupby(['date', 'theme'])['total_basket_notional']
+      .sum()
+      .reset_index()
+)
+
+pivot_themes = (
+    summary_themes
+    .pivot(index='date', columns='theme', values='total_basket_notional')
+    .fillna(0)
+    .sort_index()
+)
+
+# ----------------------------
+# STEP 5: PLOT FOCUSED THEME TIME SERIES
+# ----------------------------
+
+plt.figure(figsize=(12, 6))
+pivot_themes.plot(ax=plt.gca(), linewidth=2)
+plt.title("EMEA Region — Total Basket Notional by Selected Themes", fontsize=14)
+plt.xlabel("Date", fontsize=12)
+plt.ylabel("Total Basket Notional", fontsize=12)
+if USE_LOG_SCALE:
+    plt.yscale("log")
+    plt.ylabel("Total Basket Notional (log scale)", fontsize=12)
+plt.legend(title="Theme", bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(True, which='both', linestyle='--', alpha=0.6)
+plt.tight_layout()
+plt.show()
+
+# ----------------------------
+# STEP 6: PRINT LIST SUMMARY (LATEST DATE)
+# ----------------------------
+
+latest_date = pivot_themes.index.max()
+latest_values = pivot_themes.loc[latest_date].sort_values(ascending=False)
+
+theme_summary = [
+    {"date": latest_date.strftime("%Y-%m-%d"), "theme": theme, "notional": round(value, 2)}
+    for theme, value in latest_values.items()
+]
+
+print("\nTheme Notional Summary (latest date):")
+for item in theme_summary:
+    print(f"  - {item['theme']}: {item['notional']:,} on {item['date']}")
+
+# Optional: view in list form
+print("\nList form summary:")
+print(theme_summary)
+
+# ----------------------------
+# STEP 7: OPTIONAL — SEPARATE CHART PER THEME
+# ----------------------------
+
+if SHOW_PER_THEME_CHARTS:
+    for theme in pivot_themes.columns:
+        plt.figure(figsize=(10, 5))
+        plt.plot(pivot_themes.index, pivot_themes[theme], marker='o', linewidth=2)
+        plt.title(f"{theme} — Total Basket Notional Over Time", fontsize=14)
+        plt.xlabel("Date", fontsize=12)
+        plt.ylabel("Total Basket Notional", fontsize=12)
+        if USE_LOG_SCALE:
+            plt.yscale("log")
+            plt.ylabel("Total Basket Notional (log scale)", fontsize=12)
+        plt.grid(True, which='both', linestyle='--', alpha=0.6)
+        plt.tight_layout()
+        plt.show()
+
+# ----------------------------
+# STEP 8: EXPORT RESULTS
+# ----------------------------
+
+pivot_themes.to_csv("emea_selected_theme_timeseries.csv", index=True)
+print("\nExported: emea_selected_theme_timeseries.csv")
+
+if error_log:
+    pd.DataFrame(error_log).to_csv("error_log.csv", index=False)
+
 
 
 
