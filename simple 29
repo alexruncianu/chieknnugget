@@ -1,5 +1,167 @@
 
 
+import pandas as pd
+import glob
+import matplotlib.pyplot as plt
+import os
+
+# ----------------------------
+# CONFIGURATION
+# ----------------------------
+
+DATA_FOLDER = "data/positions/"   # Folder containing your daily CSVs
+TOP_N_TICKERS = 10                # Number of tickers to show in ticker chart (set None to show all)
+TOP_N_THEMES = 10                 # Number of top themes to show in theme chart
+
+# ----------------------------
+# STEP 1: LOAD AND COMBINE CSV FILES (ROBUST)
+# ----------------------------
+
+files = glob.glob(os.path.join(DATA_FOLDER, "*.csv"))
+
+if not files:
+    raise FileNotFoundError(f"No CSV files found in folder: {DATA_FOLDER}")
+
+df_list = []
+error_log = []
+
+for f in files:
+    try:
+        temp = pd.read_csv(f, on_bad_lines='skip', engine='python')
+        temp['source_file'] = os.path.basename(f)
+        df_list.append(temp)
+    except Exception as e:
+        print(f"Error reading {f}: {e}")
+        error_log.append({"file": f, "error": str(e)})
+
+if not df_list:
+    raise ValueError("No valid CSVs were read successfully. Check data folder and file formats.")
+
+df = pd.concat(df_list, ignore_index=True)
+print(f"Loaded {len(files)} files with {len(df)} total rows after cleaning.")
+if error_log:
+    print(f"Skipped {len(error_log)} file(s) due to read errors.")
+
+# ----------------------------
+# STEP 2: CLEAN & FILTER DATA
+# ----------------------------
+
+df.columns = df.columns.str.lower().str.strip()
+
+required_cols = ['date', 'region', 'bloomberg_ticker', 'total_basket_notional']
+for col in required_cols:
+    if col not in df.columns:
+        raise ValueError(f"Missing required column '{col}' in CSV files. Found columns: {df.columns.tolist()}")
+
+df['date'] = pd.to_datetime(df['date'], errors='coerce')
+df = df.dropna(subset=['date'])
+df = df[df['region'].astype(str).str.upper() == 'EMEA']
+df = df.dropna(subset=['total_basket_notional'])
+df['total_basket_notional'] = pd.to_numeric(df['total_basket_notional'], errors='coerce')
+df = df.dropna(subset=['total_basket_notional'])
+
+print(f"After filtering: {len(df)} valid EMEA rows remain.")
+
+# ----------------------------
+# STEP 3: GROUP & AGGREGATE BY BLOOMBERG TICKER
+# ----------------------------
+
+summary_tickers = (
+    df.groupby(['date', 'bloomberg_ticker'])['total_basket_notional']
+      .sum()
+      .reset_index()
+)
+
+if TOP_N_TICKERS is not None:
+    top_tickers = (
+        summary_tickers.groupby('bloomberg_ticker')['total_basket_notional']
+        .sum()
+        .nlargest(TOP_N_TICKERS)
+        .index
+    )
+    summary_tickers = summary_tickers[summary_tickers['bloomberg_ticker'].isin(top_tickers)]
+    print(f"Showing top {len(top_tickers)} tickers by total notional.")
+
+pivot_tickers = (
+    summary_tickers
+    .pivot(index='date', columns='bloomberg_ticker', values='total_basket_notional')
+    .fillna(0)
+    .sort_index()
+)
+
+# ----------------------------
+# STEP 4: PLOT BLOOMBERG TICKER TIME SERIES
+# ----------------------------
+
+plt.figure(figsize=(12, 6))
+pivot_tickers.plot(ax=plt.gca())
+plt.title("EMEA Region — Total Basket Notional by Bloomberg Ticker Over Time", fontsize=14)
+plt.xlabel("Date", fontsize=12)
+plt.ylabel("Total Basket Notional", fontsize=12)
+plt.legend(title="Bloomberg Ticker", bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# ----------------------------
+# STEP 5: THEME DERIVATION FROM LAST 4 CHARACTERS
+# ----------------------------
+
+# Only take tickers of length 8
+df_valid_length = df[df['bloomberg_ticker'].astype(str).str.len() == 8]
+
+# Extract last 4 characters as theme
+df_valid_length['theme'] = df_valid_length['bloomberg_ticker'].astype(str).str[-4:].str.upper()
+
+# Group by date and theme
+summary_themes = (
+    df_valid_length.groupby(['date', 'theme'])['total_basket_notional']
+      .sum()
+      .reset_index()
+)
+
+if TOP_N_THEMES is not None:
+    top_themes = (
+        summary_themes.groupby('theme')['total_basket_notional']
+        .sum()
+        .nlargest(TOP_N_THEMES)
+        .index
+    )
+    summary_themes = summary_themes[summary_themes['theme'].isin(top_themes)]
+    print(f"Showing top {len(top_themes)} themes by total notional (last 4 chars of 8-char tickers).")
+
+pivot_themes = (
+    summary_themes
+    .pivot(index='date', columns='theme', values='total_basket_notional')
+    .fillna(0)
+    .sort_index()
+)
+
+# ----------------------------
+# STEP 6: PLOT THEME TIME SERIES
+# ----------------------------
+
+plt.figure(figsize=(12, 6))
+pivot_themes.plot(ax=plt.gca())
+plt.title("EMEA Region — Total Basket Notional by Theme (Last 4 Letters of 8-char Tickers)", fontsize=14)
+plt.xlabel("Date", fontsize=12)
+plt.ylabel("Total Basket Notional", fontsize=12)
+plt.legend(title="Theme", bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# ----------------------------
+# STEP 7: EXPORT RESULTS
+# ----------------------------
+
+pivot_tickers.to_csv("emea_basket_notional_timeseries_by_ticker.csv")
+pivot_themes.to_csv("emea_basket_notional_timeseries_by_theme_last4.csv")
+
+if error_log:
+    pd.DataFrame(error_log).to_csv("error_log.csv", index=False)
+
+
 
 import pandas as pd
 import matplotlib.pyplot as plt
