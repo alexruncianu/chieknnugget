@@ -1,3 +1,138 @@
+# ================================================================
+# 📊 DCC Tender Offer Analysis — All-in-One Jupyter Notebook Code
+# ================================================================
+# PURPOSE:
+# Analyse the £600mn DCC tender offer (Nov–Dec 2024) to estimate
+# share repurchase impact, market cap effects, and FTSE index implications.
+#
+# INSTRUCTIONS:
+# 1️⃣ Export daily data from Bloomberg for DCC LN Equity (and optionally FTSE 100).
+#    Include at least Aug 2024 – Feb 2025.
+# 2️⃣ Save as Excel file named 'dcc_tender.xlsx' with the following columns:
+#       Date          - Date (YYYY-MM-DD)
+#       PX_LAST       - Closing price
+#       VOLUME        - Daily trading volume
+#       MarketCap     - Market cap in GBP
+#       SharesOut     - Shares outstanding
+#       FreeFloat     - Free float percentage
+#       IndexWeight   - (optional) FTSE membership weight (%)
+#       FTSE100       - (optional) FTSE 100 closing value
+# 3️⃣ Run this notebook cell, upload the file when prompted, and the analysis will run.
+
+# ================================================================
+# 🧩 Import Libraries
+# ================================================================
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
+from IPython.display import display
+from ipywidgets import FileUpload
+import io
+
+# ================================================================
+# 📁 Upload Bloomberg Excel File
+# ================================================================
+print("📂 Please upload your Bloomberg Excel file (e.g. dcc_tender.xlsx)")
+uploader = FileUpload(accept='.xlsx', multiple=False)
+display(uploader)
+
+def load_uploaded_file(uploader):
+    if len(uploader.value) == 0:
+        raise ValueError("❌ No file uploaded. Please upload your .xlsx file.")
+    upload = list(uploader.value.values())[0]
+    df = pd.read_excel(io.BytesIO(upload['content']))
+    print(f"✅ Loaded: {upload['metadata']['name']} — {df.shape[0]} rows")
+    return df
+
+# --- Wait for upload, then rerun this cell ---
+if len(uploader.value) == 0:
+    raise SystemExit("⏸️ Upload your Excel file above, then re-run this cell.")
+
+# ================================================================
+# 🧮 Load and Prepare Data
+# ================================================================
+df = load_uploaded_file(uploader)
+df['Date'] = pd.to_datetime(df['Date'])
+df = df.sort_values('Date')
+df.set_index('Date', inplace=True)
+
+# ================================================================
+# ⚙️ Tender Offer Parameters
+# ================================================================
+tender_value = 600_000_000   # £600mn
+tender_start = datetime(2024, 11, 1)
+tender_end = datetime(2024, 12, 31)
+
+# ================================================================
+# 📈 Derived Metrics
+# ================================================================
+df['PriceChange_%'] = df['PX_LAST'].pct_change() * 100
+df['MarketCapChange_%'] = df['MarketCap'].pct_change() * 100
+
+# --- Estimate Shares Redeemed ---
+avg_tender_price = df.loc[tender_start:tender_end, 'PX_LAST'].mean()
+shares_redeemed = tender_value / avg_tender_price
+
+df['Adj_SharesOut'] = df['SharesOut']
+df.loc[df.index >= tender_end, 'Adj_SharesOut'] = (
+    df.loc[df.index >= tender_end, 'SharesOut'] - shares_redeemed
+)
+df['Adj_MarketCap'] = df['PX_LAST'] * df['Adj_SharesOut']
+
+# --- Recalculate Index Weight (if available) ---
+if 'IndexWeight' in df.columns:
+    df['Adj_IndexWeight'] = df['Adj_MarketCap'] / df['Adj_MarketCap'].sum() * 100
+else:
+    df['Adj_IndexWeight'] = np.nan
+
+# --- FTSE100 Comparison (optional) ---
+if 'FTSE100' in df.columns:
+    df['FTSE_Return_%'] = df['FTSE100'].pct_change() * 100
+    df['Rel_Perf_%'] = df['PriceChange_%'] - df['FTSE_Return_%']
+
+# ================================================================
+# 🧠 Summary Statistics
+# ================================================================
+summary = {
+    "Avg Tender Price (£)": round(avg_tender_price, 2),
+    "Est. Shares Repurchased (mn)": round(shares_redeemed / 1e6, 2),
+    "Share Reduction (%)": round(shares_redeemed / df['SharesOut'].iloc[-1] * 100, 2),
+    "Pre-Tender Market Cap (£bn)": round(df.loc[:tender_start, 'MarketCap'].iloc[-1] / 1e9, 2),
+    "Post-Tender Market Cap (£bn)": round(df.loc[tender_end:, 'Adj_MarketCap'].iloc[0] / 1e9, 2),
+}
+display(pd.DataFrame(summary, index=["Summary"]))
+
+# ================================================================
+# 📊 Visualisations
+# ================================================================
+plt.figure(figsize=(10,5))
+plt.plot(df.index, df['PX_LAST'], label="DCC Share Price")
+plt.axvspan(tender_start, tender_end, color='orange', alpha=0.2, label="Tender Period")
+plt.title("DCC Share Price vs Tender Offer Period")
+plt.xlabel("Date"); plt.ylabel("Price (£)")
+plt.legend(); plt.grid(True); plt.show()
+
+plt.figure(figsize=(10,5))
+plt.plot(df.index, df['MarketCap'] / 1e9, label="Reported Market Cap (£bn)", alpha=0.6)
+plt.plot(df.index, df['Adj_MarketCap'] / 1e9, label="Adjusted Market Cap (£bn)", linewidth=2)
+plt.axvspan(tender_start, tender_end, color='orange', alpha=0.2)
+plt.title("Market Cap Impact (Adjusted for £600mn Tender)")
+plt.xlabel("Date"); plt.ylabel("£ Billion")
+plt.legend(); plt.grid(True); plt.show()
+
+if 'FTSE100' in df.columns:
+    plt.figure(figsize=(10,5))
+    plt.plot(df.index, df['Rel_Perf_%'].cumsum(), label="Relative Perf. vs FTSE100")
+    plt.axvspan(tender_start, tender_end, color='orange', alpha=0.2)
+    plt.title("Cumulative Relative Performance vs FTSE 100")
+    plt.xlabel("Date"); plt.ylabel("Cumulative %")
+    plt.legend(); plt.grid(True); plt.show()
+
+print("✅ Analysis complete.")
+
+
+
 import bql
 import pandas as pd
 
