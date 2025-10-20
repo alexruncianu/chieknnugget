@@ -1,5 +1,168 @@
 
 
+
+# ================================================================
+# DCC £600mn Tender Offer — Multi-Index Scenario Analysis with CSV export, discounts & selected indexes
+# ================================================================
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# -----------------------------
+# Step 0: Specify selected indexes (empty = all indexes)
+# -----------------------------
+selected_indexes = ['ASX', 'UKX']  # put empty list [] to include all indexes
+
+# -----------------------------
+# Step 1: Load vertical CSV
+# -----------------------------
+file_path = "../Tender_Offer_Analysis /DCC_Data.csv"  # note the space after folder
+df = pd.read_csv(file_path)
+
+# Convert vertical layout into dictionary
+data = dict(zip(df['Metric'], df['Value']))
+
+# -----------------------------
+# Step 2: Extract company fundamentals
+# -----------------------------
+ticker = data.get('TICKER', 'DCC')
+tender_value = float(data['TENDER_OFFER'])          # in £
+mcap = float(data['CUR_MKT_CAP'])                  # in £
+shares_out = float(data['EQY_SH_OUT'])             # number of shares
+px_last_pence = float(data['PX_LAST'])             # in pence
+avg_vol = float(data['20_DAY_AVERAGE_VOLUME_AT_TIME'])  # shares
+free_float = float(data['EQY_FREE_FLOAT_PCT']) / 100   # fraction
+
+# Convert PX_LAST to pounds
+px_last = px_last_pence / 100
+
+# -----------------------------
+# Step 3: Identify index weights dynamically
+# -----------------------------
+fundamentals = ['TICKER','TENDER_OFFER','CUR_MKT_CAP','EQY_SH_OUT','PX_LAST',
+                '20_DAY_AVERAGE_VOLUME_AT_TIME','EQY_FREE_FLOAT_PCT']
+
+index_metrics = [k for k in data.keys() if k not in fundamentals]
+
+# Filter for selected indexes
+if selected_indexes:
+    index_metrics = [idx for idx in index_metrics if idx in selected_indexes]
+
+# Convert percentages to fractions
+index_weights = {idx: float(data[idx])/100 for idx in index_metrics}
+
+# -----------------------------
+# Step 4: Scenario Analysis including discounts
+# -----------------------------
+premiums = [-0.05, 0.0, 0.05, 0.10, 0.15]  # include -5% discount
+scenarios = []
+
+for p in premiums:
+    tender_price = px_last * (1 + p)
+    shares_redeemed = tender_value / tender_price
+    new_shares = shares_out - shares_redeemed
+    share_reduction_pct = shares_redeemed / shares_out * 100
+
+    # Market cap
+    new_mcap = tender_price * new_shares
+    mcap_change_pct = (new_mcap - mcap) / mcap * 100
+
+    # Free float
+    new_free_float = free_float * (1 - share_reduction_pct / 100)
+    float_change_pct = (new_free_float - free_float) / free_float * 100
+
+    # Liquidity
+    volume_multiple = shares_redeemed / avg_vol
+
+    # 25% free float threshold
+    below_threshold = new_free_float * 100 < 25
+
+    # Index weight changes
+    new_index_weights = {}
+    index_changes = {}
+    for idx, weight_frac in index_weights.items():
+        new_weight = weight_frac * (new_mcap * new_free_float) / (mcap * free_float)
+        change_pct = (new_weight - weight_frac) / weight_frac * 100
+        new_index_weights[idx] = new_weight
+        index_changes[idx] = change_pct
+
+    # Combine results
+    scenario_result = {
+        "Tender Premium": f"{int(p*100)}%",
+        "Tender Price (£)": round(tender_price,2),
+        "Shares Repurchased (mn)": round(shares_redeemed/1e6,2),
+        "Share Reduction (%)": round(share_reduction_pct,2),
+        "New Market Cap (£bn)": round(new_mcap/1e9,2),
+        "Market Cap Change (%)": round(mcap_change_pct,2),
+        "New Free Float (%)": round(new_free_float*100,2),
+        "Free Float Change (%)": round(float_change_pct,2),
+        "Days of Volume Tendered": round(volume_multiple,1),
+        "Below 25% Threshold?": "Yes" if below_threshold else "No"
+    }
+
+    # Add dynamic index columns
+    for idx in index_metrics:
+        scenario_result[f"{idx} New Weight (%)"] = round(new_index_weights[idx]*100,5)
+        scenario_result[f"{idx} Change (%)"] = round(index_changes[idx],3)
+
+    scenarios.append(scenario_result)
+
+# -----------------------------
+# Step 5: Create DataFrame
+# -----------------------------
+scenarios_df = pd.DataFrame(scenarios)
+
+# -----------------------------
+# Step 6: Display nicely in Jupyter
+# -----------------------------
+pd.options.display.float_format = '{:,.2f}'.format
+display(scenarios_df)
+
+# Highlight negative changes in red
+def highlight_negative(val):
+    try:
+        return 'color: red' if float(val) < 0 else 'color: green'
+    except:
+        return ''
+
+styled_df = scenarios_df.style.applymap(highlight_negative, subset=[col for col in scenarios_df.columns if 'Change' in col])
+display(styled_df)
+
+# -----------------------------
+# Step 7: Export to CSV
+# -----------------------------
+output_path = "../Tender_Offer_Analysis /DCC_Tender_Scenarios.csv"
+scenarios_df.to_csv(output_path, index=False)
+print(f"Scenario table exported to {output_path}")
+
+# -----------------------------
+# Step 8: Visualization
+# -----------------------------
+# Bar chart for share reduction
+plt.figure(figsize=(8,5))
+plt.bar(scenarios_df["Tender Premium"], scenarios_df["Share Reduction (%)"], color='steelblue')
+plt.title(f"{ticker} £{tender_value/1e6:.0f}mn Tender Offer — Share Reduction by Premium")
+plt.xlabel("Tender Premium")
+plt.ylabel("Share Reduction (%)")
+plt.grid(True, axis='y')
+plt.show()
+
+# Heatmap for selected index weight changes
+index_change_cols = [col for col in scenarios_df.columns if 'Change (%)' in col and col not in ['Share Reduction (%)','Market Cap Change (%)','Free Float Change (%)']]
+plt.figure(figsize=(10,len(premiums)*0.7+2))
+sns.heatmap(scenarios_df[index_change_cols], annot=True, fmt=".2f", cmap="coolwarm", cbar_kws={'label':'% Change'})
+plt.title(f"{ticker} — Selected Index Weight Changes by Tender Premium")
+plt.xlabel("Index")
+plt.ylabel("Scenario (Premium)")
+plt.show()
+
+print("Analysis complete.")
+
+
+
+
 # ================================================================
 # DCC £600mn Tender Offer — Multi-Index Scenario Analysis with CSV export & discounts
 # ================================================================
