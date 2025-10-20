@@ -1,6 +1,112 @@
 
 
 # ================================================================
+# DCC £600mn Tender Offer — Scenario Analysis with Multiple Indexes
+# ================================================================
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# --- Step 1: Load vertical CSV ---
+file_path = "../Tender_Offer_Analysis/DCC_Data.csv"
+df = pd.read_csv(file_path)
+
+# Convert vertical layout into dictionary using exact column names
+data = dict(zip(df['Metric'], df['Value']))
+
+# --- Step 2: Extract base company values ---
+ticker = data.get('TICKER', 'DCC')
+tender_value = float(data['TENDER_OFFER'])
+mcap = float(data['CUR_MKT_CAP'])
+shares_out = float(data['EQY_SH_OUT'])
+px_last_pence = float(data['PX_LAST'])
+avg_vol = float(data['20_DAY_AVERAGE_VOLUME_AT_TIME'])
+free_float = float(data['EQY_FREE_FLOAT_PCT']) / 100
+
+# Convert PX_LAST to pounds
+px_last = px_last_pence / 100
+
+# --- Step 3: Identify index weights dynamically ---
+fundamentals = ['TICKER','TENDER_OFFER','CUR_MKT_CAP','EQY_SH_OUT','PX_LAST',
+                '20_DAY_AVERAGE_VOLUME_AT_TIME','EQY_FREE_FLOAT_PCT']
+
+# Indexes = any metric not in fundamentals
+index_metrics = [k for k in data.keys() if k not in fundamentals]
+index_weights = {idx: float(data[idx]) for idx in index_metrics}
+
+# --- Step 4: Scenario Analysis for Different Premiums ---
+premiums = [0.0, 0.05, 0.10, 0.15]  # 0%, 5%, 10%, 15%
+scenarios = []
+
+for p in premiums:
+    tender_price = px_last * (1 + p)
+    shares_redeemed = tender_value / tender_price
+    new_shares = shares_out - shares_redeemed
+    share_reduction_pct = shares_redeemed / shares_out * 100
+
+    # Adjusted market cap
+    new_mcap = tender_price * new_shares
+    mcap_change_pct = (new_mcap - mcap) / mcap * 100
+
+    # Adjust free float
+    new_free_float = free_float * (1 - share_reduction_pct / 100)
+    float_change_pct = (new_free_float - free_float) / free_float * 100
+
+    # Liquidity proxy: days of average volume
+    volume_multiple = shares_redeemed / avg_vol
+
+    # FTSE 25% free float threshold
+    below_threshold = new_free_float * 100 < 25
+
+    # Index weight changes
+    new_index_weights = {}
+    index_changes = {}
+    for idx, weight in index_weights.items():
+        new_weight = weight * (new_mcap * new_free_float) / (mcap * free_float)
+        change_pct = (new_weight - weight) / weight * 100
+        new_index_weights[idx] = new_weight
+        index_changes[idx] = change_pct
+
+    # Combine results
+    scenario_result = {
+        "Tender Premium": f"{int(p*100)}%",
+        "Tender Price (£)": round(tender_price,2),
+        "Shares Repurchased (mn)": round(shares_redeemed/1e6,2),
+        "Share Reduction (%)": round(share_reduction_pct,2),
+        "New Market Cap (£bn)": round(new_mcap/1e9,2),
+        "Market Cap Change (%)": round(mcap_change_pct,2),
+        "New Free Float (%)": round(new_free_float*100,2),
+        "Free Float Change (%)": round(float_change_pct,2),
+        "Days of Volume Tendered": round(volume_multiple,1),
+        "Below 25% Threshold?": "Yes" if below_threshold else "No"
+    }
+
+    # Add dynamic index columns
+    for idx in index_metrics:
+        scenario_result[f"{idx} New Weight (%)"] = round(new_index_weights[idx]*100,3)
+        scenario_result[f"{idx} Change (%)"] = round(index_changes[idx],2)
+
+    scenarios.append(scenario_result)
+
+# --- Step 5: Display results ---
+scenarios_df = pd.DataFrame(scenarios)
+print(f"\n{ticker} — £{tender_value/1e6:.0f}mn Tender Offer Scenario Analysis with Index Weights\n")
+display(scenarios_df)
+
+# --- Step 6: Simple Visualization of Share Reduction ---
+plt.figure(figsize=(8,5))
+plt.bar(scenarios_df["Tender Premium"], scenarios_df["Share Reduction (%)"], color='steelblue')
+plt.title(f"{ticker} £{tender_value/1e6:.0f}mn Tender Offer — Share Reduction by Premium")
+plt.xlabel("Tender Premium")
+plt.ylabel("Share Reduction (%)")
+plt.grid(True, axis='y')
+plt.show()
+
+print("Analysis complete.")
+
+
+# ================================================================
 # DCC £600mn Tender Offer — Scenario Analysis (Capitalized CSV)
 # ================================================================
 
