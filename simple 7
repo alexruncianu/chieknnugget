@@ -1,6 +1,111 @@
 
 
 
+# ----------------------------
+# DCC Tender Offer Scenario Analysis
+# ----------------------------
+# Expected CSV structure (../Tender_Offer_Analysis /DCC_Data.csv):
+# Columns: Metric, Value
+# Example rows:
+# TICKER, DCC LN
+# TENDER_OFFER, 600000000
+# CUR_MKT_CAP, 6200000000
+# EQY_SH_OUT, 100000000
+# PX_LAST, 5500
+# 20_DAY_AVERAGE_VOLUME_AT_TIME, 200000
+# EQY_FREE_FLOAT_PCT, 58
+# UKX, 0.19
+# ASX, 0.07
+#
+# Notes:
+# - PX_LAST is in pence; will be converted to pounds.
+# - TENDER_OFFER is in pounds.
+# - EQY_SH_OUT and volume are in shares.
+# - Index weights (e.g., UKX, ASX) are in % (e.g., 0.19 means 0.19%).
+# ----------------------------
+
+import pandas as pd
+
+# File path
+file_path = "../Tender_Offer_Analysis /DCC_Data.csv"
+
+# Read vertical CSV and convert to dict
+df = pd.read_csv(file_path)
+data = pd.Series(df.Value.values, index=df.Metric).to_dict()
+
+# Core metrics
+ticker = data["TICKER"]
+tender_offer_gbp = float(data["TENDER_OFFER"])
+mcap = float(data["CUR_MKT_CAP"])
+shares_out = float(data["EQY_SH_OUT"])
+px_last_pence = float(data["PX_LAST"])
+avg_vol = float(data["20_DAY_AVERAGE_VOLUME_AT_TIME"])
+free_float = float(data["EQY_FREE_FLOAT_PCT"]) / 100
+
+# Convert price from pence to pounds
+px_last = px_last_pence / 100
+
+# Identify all index weights (e.g., UKX, ASX)
+core_metrics = ["TICKER","TENDER_OFFER","CUR_MKT_CAP","EQY_SH_OUT","PX_LAST",
+                "20_DAY_AVERAGE_VOLUME_AT_TIME","EQY_FREE_FLOAT_PCT"]
+index_metrics = [m for m in data.keys() if m not in core_metrics]
+
+# Convert index weights to fractions
+index_weights = {idx: float(data[idx]) / 100 for idx in index_metrics}
+
+# Define tender premium/discount scenarios
+premiums = [-0.10, -0.05, 0.00, 0.05, 0.10, 0.15]
+
+results = []
+
+for p in premiums:
+    tender_price = px_last * (1 + p)
+    shares_redeemed = tender_offer_gbp / tender_price
+    new_shares_out = shares_out - shares_redeemed
+    share_reduction_pct = (shares_redeemed / shares_out) * 100
+
+    # Free float and free-float market cap
+    new_free_float = free_float * (1 - (shares_redeemed / shares_out))
+    new_mcap = new_shares_out * tender_price
+    old_ff_mcap = mcap * free_float
+    new_ff_mcap = new_mcap * new_free_float
+
+    for idx, old_weight in index_weights.items():
+        old_weight_frac = old_weight
+        # Adjust weights based on free-float market cap
+        new_weight_frac = old_weight_frac * (new_ff_mcap / old_ff_mcap)
+        abs_change_bps = (new_weight_frac - old_weight_frac) * 10000  # in bps
+
+        results.append({
+            "Ticker": ticker,
+            "Tender Premium": f"{int(p*100)}%",
+            "Tender Price (£)": round(tender_price, 2),
+            "Index": idx,
+            "Old Weight (%)": round(old_weight_frac * 100, 4),
+            "New Weight (%)": round(new_weight_frac * 100, 4),
+            "Absolute Weight Change (bps)": round(abs_change_bps, 2),
+            "Share Reduction (%)": round(share_reduction_pct, 2),
+            "New Free Float (%)": round(new_free_float * 100, 2),
+            "New Free-Float Mkt Cap (£bn)": round(new_ff_mcap / 1e9, 2)
+        })
+
+# Combine results
+scenarios_df = pd.DataFrame(results)
+
+# Save results to CSV
+output_path = "../Tender_Offer_Analysis /DCC_Index_Weight_Changes.csv"
+scenarios_df.to_csv(output_path, index=False)
+
+# Display filtered results if desired
+# e.g., to see just UKX results:
+selected_index = "UKX"
+filtered_df = scenarios_df[scenarios_df["Index"] == selected_index]
+
+print(f"\nResults saved to: {output_path}")
+print(f"\nFiltered results for {selected_index}:")
+display(filtered_df)
+
+
 # ================================================================
 # DCC £600mn Tender Offer — Multi-Index Scenario Analysis with CSV export, discounts & selected indexes
 # ================================================================
