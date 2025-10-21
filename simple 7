@@ -1,6 +1,63 @@
 
 
 
+Provider: FTSE Russell (FTSE UK Index Series)
+Treatment:
+- Updates to shares in issue and free float triggered by material float changes. Can occur intra-quarter if thresholds are met.
+- Implementation typically within two business days after event confirmation (T+2).
+- Notices and detailed methodology published in official FTSE Russell materials.
+Key links (methodology / notices):
+- FTSE Russell Free Float Restrictions: https://www.lseg.com/content/dam/ftse-russell/en_us/documents/policy-documents/free-float-restrictions.pdf
+- Free Float Maintenance FAQ (Quarterly and Intra-Quarter): https://www.lseg.com/content/dam/ftse-russell/en_us/documents/policy-documents/shares-and-free-float-maintenance-faq.pdf
+- Guide to Calculation Methods for the FTSE UK Index Series: https://www.lseg.com/content/dam/ftse-russell/en_us/documents/ground-rules/ftse-uk-index-series-guide-to-calc.pdf
+- FTSE Russell Index Notices / Market Consultations: https://www.lseg.com/en/ftse-russell/governance/market-consultations
+
+Provider: MSCI (MSCI Europe / MSCI ACWI / Global Indices)
+Treatment:
+- Float and shares outstanding changes updated via corporate actions methodology.
+- Large float reductions trigger updates to counts and weights; possible membership/removal if thresholds breached.
+- Implementation usually two business days after completion of the corporate action/final results.
+Key links (methodology / notices):
+- MSCI Corporate Events Methodology (general): https://www.msci.com/documents/1296102/1331873/Partial_Tender_Offers_March2012.pdf
+- MSCI Corporate Events Methodology (latest): https://www.msci.com/documents/1296102/1311232/MSCI+Methodology+Documents.pdf
+- MSCI Index Calculation Methodology: https://www.msci.com/indexes/documents/methodology/0_MSCI_Index_Calculation_Methodology_20240812.pdf
+- MSCI Methodology overview: https://www.msci.com/eqb/methodology/meth_docs/MSCI_CEMethodology_Feb2020.pdf
+
+Provider: S&P Dow Jones Indices (S&P DJI)
+Treatment:
+- Corporate actions and free float changes handled per S&P DJI methodologies.
+- Tender-like float changes typically lead to index weight adjustments following final results.
+- Updates align with S&P DJI calendars and notices; not strictly tied to quarterly reviews.
+Key links (methodology / notices):
+- S&P Dow Jones Indices Methodology (Index Math / Float): https://www.spglobal.com/spdji/en/documents/methodologies/methodology-index-math.pdf
+- S&P DJI Corporate Actions Handbook (policy context): https://www.spglobal.com/spdji/es/documents/methodologies/methodology-index-math.pdf (see relevant sections)
+
+Provider: STOXX (STOXX indices)
+Treatment:
+- Corporate actions and float changes managed under STOXX rules.
+- Large float shifts can trigger intra-quarter updates if thresholds are satisfied.
+- Notices specify exact effective dates and weight adjustments.
+Key links (methodology / notices):
+- STOXX corporate actions / float guidelines (typical framework): https://www.stoxx.com/hubfs/Whitepapers/2024%20Whitepapers/STOXX_WP_Understanding_Investor_Preferences_through_Passive_Investment_Flows_2024Apr.pdf
+- STOXX calculation / methodology overview: https://www.spglobal.com/spdji/es/documents/methodologies/methodology-index-math.pdf
+
+Provider: Solactive (requested)
+Treatment:
+- Solactive follows standard corporate action rules for free float and share changes.
+- Implementations typically occur in line with local market conventions and partner ETF/portfolio rebalancing calendars.
+Key links (methodology / notices):
+- Solactive methodology overview (general): https://www.solactive.com/how-we-calculate/
+- Solactive index methodology specifics (searchable on site for “float” / “tender” updates)
+
+Notes for quick reference
+- Intra-quarter updates are common when float or share counts cross material thresholds; exact thresholds and timing are defined in each provider’s official documents.
+- Post-event implementation usually occurs within 2 business days of confirmation, but always verify the latest notices for the precise date and any prorations or special cases.
+- Always cross-check the official index notices for the tender to confirm whether a deletion risk exists and to extract the exact effective date and weights.
+
+If you want, I can tailor this into a one-page briefing with a compact checklist and a ready-to-share executive summary, plus a live template for recording the tender’s expected impact against each index family. 
+
+
+
 # ----------------------------
 # DCC Tender Offer Scenario Analysis
 # ----------------------------
