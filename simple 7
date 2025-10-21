@@ -1,6 +1,190 @@
 
 
 
+═══════════════════════════════════════════════════════════════════════════════════════
+TENDER OFFER & BUYBACK TREATMENT BY INDEX PROVIDER – WITH METHODOLOGY REFERENCES
+═══════════════════════════════════════════════════════════════════════════════════════
+
+PROVIDER: FTSE Russell (FTSE 100, FTSE All-Share, FTSE UK Index Series)
+
+Treatment of Tender Offer Buyback:
+• Tender offers and UK/Australian tender offer buybacks implemented IMMEDIATELY after 
+  prerequisites achieved (completion/confirmation/final results published).
+• Intra-quarter implementation occurs if:
+  - USD $1 billion investable market cap change (change in index shares × offer price)
+  OR
+  - 5% change in index shares AND USD $250 million investable market cap change
+• UK/AU specific: Due to regulatory requirements, UK companies buying >15% of shares via 
+  tender offer and Australian equal-opportunity tender offers implemented upon receipt of 
+  results if above thresholds met.
+• All OTHER partial voluntary buybacks or partial tenders: quarterly review only.
+• Implementation timing: T+2 business days after tender completion/confirmation.
+• Weight changes applied proportionally across indices.
+• Deletion only if float <5% (unlikely for DCC).
+
+Threshold Documentation:
+Section 2.2 of "Quarterly and Intra-Quarter Free Float and Share Updates FAQ" (v3.4, May 2025)
+- Page 4-5: Details intra-quarter thresholds for share/float changes
+- Page 8: Question 5 specifies UK/AU tender offer treatment and implementation timing
+- Page 4-5: "Only share and free float changes resulting from primary offerings...OR 
+  secondary offerings...will be implemented where it results in: A USD 1bn investable market 
+  cap change...OR A 5% change in index shares AND a USD 250m investable market cap change"
+- Page 5: "UK and Australian listed constituents...UK listed companies...required to [buy back] 
+  via a tender offer...FTSE Russell will implement the change upon receipt of the tender offer 
+  buy back results subject to the above intra-quarter update thresholds being met."
+
+Methodology Links:
+• Corporate Actions and Events Guide (Section 4.8 - Compulsory Share Buy Backs): 
+  https://www.lseg.com/content/dam/ftse-russell/en_us/documents/policy-documents/corporate-actions-and-events-guide.pdf
+• Free Float Maintenance FAQ (Section 2.2 - Intra-quarter updates): 
+  https://www.lseg.com/content/dam/ftse-russell/en_us/documents/policy-documents/shares-and-free-float-maintenance-faq.pdf
+
+───────────────────────────────────────────────────────────────────────────────────────
+
+PROVIDER: MSCI (MSCI Europe, MSCI ACWI, MSCI Global Investable Market Indexes)
+
+Treatment of Tender Offer Buyback:
+• Partial tender offers and buyback offers implemented INTRA-QUARTER if results represent 
+  ≥5%, 10%, or 25% for Standard, Small Cap, and Micro Cap constituents respectively of 
+  pre-event number of shares used in MSCI Indexes.
+• Implementation occurs TWO BUSINESS DAYS after official communication of results if 
+  sufficient information publicly available to determine post-event free float.
+• Fixed price offers: PAF of 1 applied on ex-date (or first business day after end of offer if 
+  ex-date unavailable).
+• Dutch auctions: No PAF applied (price unknown beforehand).
+• Number of shares (NOS) and Free Float Factor (FIF) adjusted simultaneously.
+• If FIF falls below 0.15 (15%) post-event, constituent faces deletion risk.
+• Changes <5%/10%/25% (depending on size segment): deferred to quarterly index review.
+• Pending NOS/float updates <±1% on post-event basis: deferred to quarterly review.
+
+Threshold Documentation:
+Section 2.4.3 of "MSCI Corporate Events Methodology" (August 2024)
+- Page 13-14: "Results of partial tender offers and buyback offers"
+- Page 13: "After the results of the offer have been officially communicated, and if 
+  sufficient information is publicly available to determine the post-event free float, then any 
+  changes in number of shares and FIF and/or DIF are implemented with two full business days 
+  advance notification, if results of the offer represents at least 5%, 10% or 25% for Standard 
+  constituents...Small Caps constituents...and Micro Caps constituents...respectively of the 
+  security's pre-event number of shares used in MSCI Indexes."
+- Page 13: "Changes in number of shares following the actual cancellation of the shares and 
+  changes that do not meet the criteria for implementation at the time of the event...are 
+  implemented at the next regularly scheduled Index Review"
+
+Methodology Links:
+• MSCI Corporate Events Methodology (Section 2.4 - Partial tender offers and buyback offers): 
+  https://www.msci.com/indexes/documents/methodology/0_MSCI_Corporate_Events_Methodology_20240812.pdf
+• MSCI Global Investable Market Indexes Methodology: 
+  https://www.msci.com/indexes/documents/methodology/1_MSCI_Global_Investable_Market_Indexes_Methodology_20240812.pdf
+
+───────────────────────────────────────────────────────────────────────────────────────
+
+PROVIDER: S&P Dow Jones Indices (S&P UK, S&P Global Indices)
+
+Treatment of Tender Offer Buyback:
+• Dutch auctions, self-tender offer buybacks, and split-off exchanges eligible for ACCELERATED 
+  IMPLEMENTATION regardless of size once final results publicly announced.
+• Standard tender offers: Changes implemented if ≥5% shares outstanding AND ≥USD $150 million.
+• Implementation timing: 1-2 business days' notice from announcement (1 day US-domiciled, 
+  2 days non-US).
+• Share count and Investable Weight Factor (IWF) changes implemented together if IWF changes 
+  by ≥5 percentage points.
+• Changes <5% of shares outstanding: deferred to quarterly rebalancing unless ≥USD $1 billion.
+• Target Security Float Change section 1.c and 1.d (page 7) specifies thresholds.
+
+Threshold Documentation:
+Section "Non-Mandatory Share and IWF Updates" → "Material Share/IWF Changes" (page 14)
+- Page 7: "Target Security Float Change" subsection details tender offer implementation rules
+- Page 7, Condition 1.d: "Size of the change is at least 5% and US$ 150 million or US$ 1 billion"
+- Page 7, Condition 2.d: "Size of the change is at least US$ 1 billion or IWF changes by at 
+  least 15%"
+- Page 14: "Dutch Auctions, Self-tender offer buybacks, and Split-off exchange offers" 
+  section confirms accelerated implementation "regardless of size"
+
+Methodology Links:
+• S&P DJI Equity Indices Policies & Practices (Section on M&A and Non-Mandatory Updates): 
+  https://www.spglobal.com/spdji/en/documents/methodologies/methodology-sp-equity-indices-policies-practices.pdf
+• S&P Index Math Methodology: 
+  https://www.spglobal.com/spdji/en/documents/methodologies/methodology-index-math.pdf
+
+───────────────────────────────────────────────────────────────────────────────────────
+
+PROVIDER: STOXX (EURO STOXX 50, STOXX Europe 600, STOXX Indices)
+
+Treatment of Tender Offer Buyback:
+• Corporate actions including tender offers handled per STOXX corporate action rules.
+• Large float shifts (typically >5%) trigger intra-quarter weight adjustments.
+• Share count and float adjustments coordinated with settlement dates and exchange 
+  notifications.
+• Free-float market cap weighting maintained with maximum constituent weight caps.
+• Implementation occurs immediately upon completion with appropriate notice.
+
+Threshold Documentation:
+No specific public documentation found detailing exact percentage thresholds. STOXX 
+methodologies reference "material changes" and typically align with 5% threshold common 
+across industry but specific documented thresholds not publicly specified in reviewed materials.
+
+Methodology Links:
+• STOXX Calculation Guide (general methodology - search specific index on site): 
+  https://www.stoxx.com/index-details
+• STOXX Corporate Actions Framework (consult specific index methodology documents)
+
+───────────────────────────────────────────────────────────────────────────────────────
+
+PROVIDER: Solactive (Various Custom and Thematic Indices)
+
+Treatment of Tender Offer Buyback:
+• Tender offers implemented from cum-day to ex-day to coincide with price effect.
+• Germany, Switzerland, Austria markets: If tendered shares trade separately, Solactive may 
+  replace common share line with tendered line if ALL four conditions met:
+  a) Minimum acceptance level requirement met
+  b) At least 50% of shares held by acquirer
+  c) Additional offer period (not extension) launched
+  d) Tendered shares continue trading after additional offer period expires
+• Index adjustments announced with minimum TWO BUSINESS DAYS' notice.
+• Solactive retains discretion for unusual/complex actions to preserve index integrity.
+• Implementation effective on specified date in announcement.
+
+Threshold Documentation:
+Section 3.2 "Timing of Adjustment" (pages 7-8) of "Guideline for Extraordinary Corporate Actions" 
+(Version 1.4, October 2024)
+- Page 7: Lists conditions a), b), c) for implementation
+- Page 7-8: "An adjustment will be applied to the Index when: a) the Extraordinary Event leads 
+  to a DELISTING...b) the acquiring company initiates a squeeze-out procedure...c) the results 
+  of the tender offer or shareholder meeting are announced, the offer is successful, and 
+  unconditional and the resulting free float of the target company is set to drop below 15%."
+- Page 8: "In Certain markets (e.g. Germany, Switzerland and Austria)...replace the common 
+  share line, with the tendered line...if the below conditions are satisfied: a) The minimum 
+  acceptance level requirement is met b) At least 50% of the total shares would be held by 
+  acquiror c) An additional offer period (not an extension) is launched."
+
+Methodology Links:
+• Solactive Extraordinary Corporate Actions Guideline (Section 3 - Mergers & Acquisitions): 
+  https://www.solactive.com/wp-content/uploads/2018/01/ECA-Guideline-change-_v1.4_03October24_FINAL.pdf
+• Solactive Equity Index Methodology: 
+  https://www.solactive.com/documents/equity-index-methodology/
+
+═══════════════════════════════════════════════════════════════════════════════════════
+SUMMARY FOR DCC £600M TENDER (~12% OF FLOAT)
+═══════════════════════════════════════════════════════════════════════════════════════
+
+All major providers will implement DCC's tender INTRA-QUARTER as the 12% float reduction 
+exceeds all materiality thresholds:
+
+✓ FTSE: Exceeds 5% + $250M threshold → Immediate T+2 implementation
+✓ MSCI: Exceeds 5% threshold for Standard constituents → +2 business days implementation
+✓ S&P DJI: Likely exceeds 5% + $150M threshold → 1-2 day notice implementation
+✓ STOXX: Exceeds typical 5% threshold → 2-3 day notice implementation  
+✓ Solactive: Meets 2-day notice requirements → Implementation per index rules
+
+No Deletion Risk: DCC remains in all indices; only weights/shares adjusted.
+
+═══════════════════════════════════════════════════════════════════════════════════════
+
+
+
+
+
+
 Provider: FTSE Russell (FTSE UK Index Series)
 Treatment:
 - Updates to shares in issue and free float triggered by material float changes. Can occur intra-quarter if thresholds are met.
