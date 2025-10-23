@@ -1,4 +1,113 @@
 
+
+
+# ============================================
+# TKMS Buy-at-Close, Sell-Next-Day Strategy
+# Fully fixed version (no KeyError)
+# ============================================
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ---------------------------
+# 1. Load CSV safely
+# ---------------------------
+file_path = "TKMS_Data.csv"
+df = pd.read_csv(file_path)
+
+# Strip spaces and lower-case headers to avoid mismatch
+df.columns = df.columns.str.strip()
+
+# Ensure the required columns exist
+required_columns = ['Date_Time', 'Price', 'Volume']
+for col in required_columns:
+    if col not in df.columns:
+        raise ValueError(f"Column '{col}' not found in CSV. Available columns: {df.columns.tolist()}")
+
+# ---------------------------
+# 2. Parse Date_Time and create 'Date'
+# ---------------------------
+df['Date_Time'] = pd.to_datetime(df['Date_Time'], format='%d/%m/%Y %H:%M', errors='coerce')
+
+# Drop rows with invalid Date_Time
+df = df.dropna(subset=['Date_Time'])
+
+# Create 'Date' column safely
+df['Date'] = df['Date_Time'].dt.date
+
+# Sort chronologically
+df = df.sort_values('Date_Time').reset_index(drop=True)
+
+# ---------------------------
+# 3. Identify daily closes and opens
+# ---------------------------
+daily_close = df.groupby('Date', as_index=False).tail(1)[['Date_Time', 'Price']]
+daily_close = daily_close.rename(columns={'Price': 'Close_Price', 'Date_Time': 'Close_Time'})
+daily_close['Date'] = daily_close['Close_Time'].dt.date
+
+daily_open = df.groupby('Date', as_index=False).head(1)[['Date_Time', 'Price']]
+daily_open = daily_open.rename(columns={'Price': 'Open_Price', 'Date_Time': 'Open_Time'})
+daily_open['Date'] = daily_open['Open_Time'].dt.date
+
+# Merge daily close and next-day open
+daily = pd.merge(daily_close, daily_open, on='Date', suffixes=('_Close', '_Open'))
+
+# ---------------------------
+# 4. Compute Buy-Close → Sell-Next-Day returns
+# ---------------------------
+returns = []
+dates = sorted(daily['Date'])
+
+for i in range(len(dates) - 1):
+    date_close = dates[i]
+    date_next_open = dates[i + 1]
+
+    close_price = daily.loc[daily['Date'] == date_close, 'Close_Price'].values[0]
+    next_open_price = daily.loc[daily['Date'] == date_next_open, 'Open_Price'].values[0]
+
+    ret = (next_open_price - close_price) / close_price
+    returns.append({
+        'Buy_Date': date_close,
+        'Sell_Date': date_next_open,
+        'Buy_Close': close_price,
+        'Sell_Open': next_open_price,
+        'Return_%': ret * 100
+    })
+
+returns_df = pd.DataFrame(returns)
+
+# ---------------------------
+# 5. Performance summary
+# ---------------------------
+average_return = returns_df['Return_%'].mean()
+total_return = (returns_df['Return_%'] / 100 + 1).prod() - 1
+
+print("TKMS Buy Close → Sell Next Open Strategy")
+print(returns_df)
+print(f"\nAverage Daily Return: {average_return:.3f}%")
+print(f"Cumulative Return (compounded): {total_return*100:.2f}%")
+
+# ---------------------------
+# 6. Plot cumulative performance
+# ---------------------------
+returns_df['Cumulative_Value'] = (1 + returns_df['Return_%'] / 100).cumprod()
+
+plt.figure(figsize=(10,6))
+plt.plot(returns_df['Sell_Date'], returns_df['Cumulative_Value'], marker='o', linewidth=2)
+plt.title('TKMS Buy-at-Close, Sell-Next-Open Strategy Performance')
+plt.xlabel('Sell Date')
+plt.ylabel('Cumulative Growth (× Starting Capital)')
+plt.grid(True)
+plt.show()
+
+# ---------------------------
+# 7. Save results
+# ---------------------------
+returns_df.to_csv("TKMS_buy_close_sell_open_returns.csv", index=False)
+print("\nStrategy complete. Results saved to TKMS_buy_close_sell_open_returns.csv")
+
+
+
 # ============================================
 # TKMS Buy-at-Close, Sell-Next-Day Strategy
 # Using CSV: TKMS_Data.csv
