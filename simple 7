@@ -1,4 +1,76 @@
+import pandas as pd
+import matplotlib.pyplot as plt
 
+# Load CSV
+file_path = "TKMS_Data.csv"
+df = pd.read_csv(file_path)
+df.columns = df.columns.str.strip()  # clean column names
+
+# Parse Date_Time
+df['Date_Time'] = pd.to_datetime(df['Date_Time'], format='%d/%m/%Y %H:%M', errors='coerce')
+df = df.dropna(subset=['Date_Time'])
+df['Date'] = df['Date_Time'].dt.date
+
+# Sort by time
+df = df.sort_values('Date_Time').reset_index(drop=True)
+
+# Identify close price per day
+daily_close = df.groupby('Date').tail(1)[['Date_Time', 'Price']].rename(columns={'Price': 'Close_Price'})
+daily_close['Date'] = daily_close['Date_Time'].dt.date
+
+# Prepare list to store all sell opportunities
+sell_analysis = []
+
+dates = sorted(df['Date'].unique())
+
+for i in range(len(dates)-1):
+    prev_date = dates[i]
+    next_date = dates[i+1]
+
+    # Buy price = previous day's close
+    buy_price = daily_close.loc[daily_close['Date']==prev_date, 'Close_Price'].values[0]
+
+    # Get all trades for next day (potential sell times)
+    next_day_trades = df[df['Date'] == next_date].copy()
+
+    # Compute return if selling at each trade
+    next_day_trades['Return_%'] = (next_day_trades['Price'] - buy_price) / buy_price * 100
+    next_day_trades['Buy_Date'] = prev_date
+    next_day_trades['Sell_Date'] = next_date
+
+    # Append to list
+    sell_analysis.append(next_day_trades[['Buy_Date','Sell_Date','Date_Time','Price','Return_%']])
+
+# Combine all days
+sell_df = pd.concat(sell_analysis).reset_index(drop=True)
+
+# ---------------------------
+# Find best sell time per day
+# ---------------------------
+best_sell = sell_df.loc[sell_df.groupby('Buy_Date')['Return_%'].idxmax()]
+
+print("Best sell times for each buy-at-close:")
+print(best_sell[['Buy_Date','Sell_Date','Date_Time','Price','Return_%']])
+
+# ---------------------------
+# Plot TKMS price over time
+# ---------------------------
+plt.figure(figsize=(14,6))
+plt.plot(df['Date_Time'], df['Price'], label='Price', linewidth=1.5)
+plt.scatter(best_sell['Date_Time'], best_sell['Price'], color='red', label='Best Sell', zorder=5)
+plt.title('TKMS Stock Price and Optimal Sell Times')
+plt.xlabel('Time')
+plt.ylabel('Price')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# ---------------------------
+# Optional: Save analysis
+# ---------------------------
+sell_df.to_csv("TKMS_intraday_sell_analysis.csv", index=False)
+best_sell.to_csv("TKMS_best_sell_times.csv", index=False)
+print("Analysis saved to CSVs: sell_analysis and best_sell_times")
 
 
 # ============================================
