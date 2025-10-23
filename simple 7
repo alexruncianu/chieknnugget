@@ -1,4 +1,177 @@
 
+#######################################################################
+# STEP 1 — BLOOMBERG EXPORT FORMAT (for intraday backtest)
+#######################################################################
+# In Bloomberg Excel Add-in or via IB <GO>:
+# Export 1-minute or 5-minute bars for the last few trading days.
+
+# REQUIRED COLUMNS (exact headers in Excel):
+# ------------------------------------------
+# Datetime, Price, Volume
+#
+# Example (CSV rows):
+# Datetime,Price,Volume
+# 2025-10-20 09:00:00,14.23,1050
+# 2025-10-20 09:05:00,14.24,900
+# 2025-10-20 16:30:00,14.40,1200
+# 2025-10-21 09:00:00,14.42,800
+# 2025-10-21 09:05:00,14.50,700
+# 2025-10-21 16:30:00,14.78,1000
+#
+# Save the file as:
+#   TKMS_intraday.csv
+#
+# Ensure the timestamps cover the full trading day (e.g., 09:00–17:30 CET).
+#######################################################################
+
+
+#######################################################################
+# STEP 2 — PYTHON / JUPYTER NOTEBOOK CODE
+#######################################################################
+# Copy and paste everything below into a single Jupyter cell.
+# It will:
+#   - Read your CSV
+#   - Detect daily closes and next-day opens
+#   - Simulate buying at the close
+#   - Simulate selling at multiple intraday times the next day
+#   - Identify which sell time gives the best mean/Sharpe return
+#######################################################################
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+from datetime import timedelta, time
+
+plt.rcParams['figure.figsize'] = (10,5)
+
+# ======== USER SETTINGS ========
+CSV_FILE = "TKMS_intraday.csv"     # Your exported Bloomberg file
+INTERVAL_MIN = 5                   # minutes between bars (set to match your export)
+MARKET_CLOSE_TIME = time(17, 30)   # Frankfurt/Xetra close
+SELL_TARGETS = ["open","30m","60m","90m","120m","10:00","12:00","15:00","close"]
+# ================================
+
+# ======== LOAD AND PREPARE DATA ========
+df = pd.read_csv(CSV_FILE, parse_dates=['Datetime'])
+df = df.rename(columns=str.lower)
+df = df.rename(columns={'datetime':'dt'})
+df = df.sort_values('dt').reset_index(drop=True)
+
+# sanity checks
+if 'price' not in df.columns:
+    raise ValueError("CSV must have a column named 'Price' or 'price'.")
+
+df.set_index('dt', inplace=True)
+df['date'] = df.index.normalize()
+
+# identify trading days
+days = df['date'].unique()
+days = pd.to_datetime(days)
+days = np.sort(days)
+
+# ======== HELPER FUNCTIONS ========
+def parse_offset(target):
+    if target.endswith("m"):
+        return timedelta(minutes=int(target[:-1]))
+    if target.endswith("h"):
+        return timedelta(hours=int(target[:-1]))
+    return None
+
+def pick_sell_price(nextday_df, target):
+    if target == "open":
+        return nextday_df['price'].iloc[0]
+    if target == "close":
+        return nextday_df['price'].iloc[-1]
+    td = parse_offset(target)
+    if td:
+        t0 = nextday_df.index[0]
+        ts_target = t0 + td
+        later = nextday_df.loc[nextday_df.index >= ts_target]
+        return later['price'].iloc[0] if not later.empty else nextday_df['price'].iloc[-1]
+    if ":" in target:
+        hh, mm = map(int, target.split(":"))
+        sel = nextday_df.loc[nextday_df.index.time >= time(hh,mm)]
+        return sel['price'].iloc[0] if not sel.empty else nextday_df['price'].iloc[-1]
+    return nextday_df['price'].iloc[-1]
+
+# ======== MAIN BACKTEST LOOP ========
+records = []
+for i in range(len(days)-1):
+    day = days[i]
+    next_day = days[i+1]
+    day_df = df[df['date'] == day]
+    next_df = df[df['date'] == next_day]
+    if day_df.empty or next_df.empty:
+        continue
+    # buy at close
+    buy_df = day_df[day_df.index.time <= MARKET_CLOSE_TIME]
+    if buy_df.empty: 
+        continue
+    buy_price = buy_df['price'].iloc[-1]
+    for target in SELL_TARGETS:
+        sell_price = pick_sell_price(next_df, target)
+        ret = (sell_price - buy_price) / buy_price
+        records.append({
+            'buy_date': day,
+            'sell_target': target,
+            'buy_price': buy_price,
+            'sell_price': sell_price,
+            'return': ret
+        })
+
+res = pd.DataFrame(records)
+if res.empty:
+    raise ValueError("No valid trading day pairs found. Check CSV coverage or timestamps.")
+
+# ======== ANALYSIS ========
+summary = res.groupby('sell_target')['return'].agg(['count','mean','std','median'])
+summary['win_rate'] = res.groupby('sell_target')['return'].apply(lambda x: (x>0).mean())
+summary['sharpe'] = summary['mean'] / summary['std']
+summary = summary.sort_values('mean', ascending=False)
+
+print("\n=== Summary stats by sell time ===")
+print(summary.round(6))
+
+# t-tests
+print("\nT-tests vs 0:")
+for target, grp in res.groupby('sell_target'):
+    t, p = stats.ttest_1samp(grp['return'], 0.0)
+    print(f"{target:8s}  N={len(grp):3d}  mean={grp['return'].mean():+.5f}  t={t:.3f}  p={p:.4f}")
+
+# ======== PLOTS ========
+plt.errorbar(summary.index, summary['mean'], yerr=summary['std'], fmt='o')
+plt.axhline(0, color='k', linestyle='--')
+plt.title("Mean return by sell time (error bars = std)")
+plt.ylabel("Mean return")
+plt.xticks(rotation=45)
+plt.show()
+
+# Boxplot
+res.boxplot(column='return', by='sell_target', rot=45)
+plt.suptitle('')
+plt.title('Distribution of returns by sell time')
+plt.ylabel('Return')
+plt.show()
+
+# Cumulative P&L for best target
+best = summary.index[0]
+cum = res[res['sell_target']==best].sort_values('buy_date')
+cum['cum_pnl'] = cum['return'].cumsum()
+plt.plot(cum['buy_date'], cum['cum_pnl'], marker='o')
+plt.title(f"Cumulative P&L: Buy close → Sell {best}")
+plt.ylabel("Cumulative return (units)")
+plt.xlabel("Buy date")
+plt.grid(True)
+plt.show()
+
+print(f"\nBest selling time historically: {best}")
+#######################################################################
+# END
+#######################################################################
+
+
+
 Team,
 
 Quick update on TKMS (€76.11) – strong post-spin rally losing momentum, with risk/reward now skewed to the downside.
