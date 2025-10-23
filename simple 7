@@ -1,3 +1,68 @@
+# Additional Sources on European Stocks Auction Volumes
+
+## 1. AMF France - Growing Importance of Closing Auction  
+- **Quote:**  
+  "France is one of the markets on where this trend has reached the highest levels, with close to 41% of CAC 40 volumes traded at the closing auction on Euronext Paris."  
+- **Source:**  
+  AMF France report, October 2019  
+- **Link:**  
+  [https://www.amf-france.org/en/news-publications/publications/reports-research-and-analysis/growing-importance-closing-auction-share-trading-volumes](https://www.amf-france.org/en/news-publications/publications/reports-research-and-analysis/growing-importance-closing-auction-share-trading-volumes) [web:102]
+
+---
+
+## 2. The Trade News - Closing Auction Liquidity Growth  
+- **Quote:**  
+  "Over the past five years, the closing auction has become the most significant liquidity event in European equities, with over 25% of daily volumes being executed during the last 5-10 minutes of the trading day."  
+- **Source:**  
+  The Trade News, August 2020  
+- **Link:**  
+  [https://www.thetradenews.com/thought-leadership/all-eyes-on-auctions-risks-associated-with-closing-auction-liquidity-fragmentation/](https://www.thetradenews.com/thought-leadership/all-eyes-on-auctions-risks-associated-with-closing-auction-liquidity-fragmentation/) [web:103]
+
+---
+
+## 3. Finalto Blog - FTSE Closing Auction Volume Increase  
+- **Quote:**  
+  "In the major European markets – the FTSE, DAX and CAC, the share of trading volume executed in the closing auction accounted for 40% to 55% of daily trading volume in 2023. Of particular note was the jump for FTSE stocks – closing auction share rose from 31% at the beginning of 2019 to 55% at the end of 2023."  
+- **Source:**  
+  Finalto, May 2024  
+- **Link:**  
+  [https://www.finalto.com/uk/blogs/closing-bell-auctions-are-impacting-liquidity-and-price-discovery/](https://www.finalto.com/uk/blogs/closing-bell-auctions-are-impacting-liquidity-and-price-discovery/) [web:104]
+
+---
+
+## 4. Eurosale Online - European Stock Auctions  
+- **Summary:**  
+  Opening auctions typically constitute a small fraction of volume; closing auctions dominate due to price discovery and index benchmarking.  
+- **Link:**  
+  [https://eurosaleonline.com/blog/european-stock-auctions](https://eurosaleonline.com/blog/european-stock-auctions) [web:105]
+
+---
+
+## 5. AFME Q2 2025 Equity Markets Report  
+- **Summary:**  
+  Highlights increased liquidity and turnover concentration during auction periods.  
+- **Link:**  
+  [https://www.afme.eu/publications/data-research/afme-q2-2025-equity-primary-markets-and-trading-report/](https://www.afme.eu/publications/data-research/afme-q2-2025-equity-primary-markets-and-trading-report/) [web:110]
+
+---
+
+## 6. BMLL Tech Market Lens - European Liquidity  
+- **Summary:**  
+  Shows detailed liquidity maps with significant volumes in closing auctions across European venues.  
+- **Link:**  
+  [https://www.bmlltech.com/news/market-insight/bmll-market-lens-liquidity-maps](https://www.bmlltech.com/news/market-insight/bmll-market-lens-liquidity-maps) [web:112]
+
+---
+
+*These sources document the growing share of daily volume executed in closing auctions for European stocks, often reaching 40% or more in major markets, while opening auction volumes remain small in comparison.*
+
+
+
+
+
+
+
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
