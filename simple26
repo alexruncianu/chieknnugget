@@ -1,3 +1,57 @@
+
+Comcast Spin-Off Cheat Sheet – Catch-Up Notes
+
+1️⃣ Q3 2025 Key Takeaways
+	•	EPS: $1.12 vs $1.10 est → beat
+	•	Free Cash Flow: ~$4.95B (+45% YoY)
+	•	Segment Highlights:
+	•	Theme Parks: +18–19% YoY
+	•	Wireless: +414k net adds
+	•	Studios: +6% YoY
+	•	Media/Advertising: Revenue down ~20% YoY
+	•	Olympics Context: Q3 2024 included Olympics-driven ad revenue; part of the YoY decline is non-recurring, not structural
+	•	Broadband: -104k subs; ARPU growth slowing
+	•	Insight: Parent (RemainCo) remains strong; weaker legacy media assets likely go to SpinCo → supports spin thesis
+
+
+
+3️⃣ SOTP (Sum-of-the-Parts) Valuation
+	•	Method: Value each segment independently → add, subtract debt → fair share price
+	•	Multiples:
+	•	RemainCo: 8–10× EBITDA
+	•	SpinCo: 4–6× EBITDA
+	•	Blended now: ~6× EBITDA
+	•	Implied value: $40–45/share
+	•	Catalyst: Spin-off removes conglomerate discount → value unlocked
+
+
+4️⃣ Ex-Spin Mechanics & Timeline
+	•	Ex-spin date: Parent stock drops mechanically by SpinCo value (like dividend)
+	•	Timeline:
+	•	Dec 4, 2025: Investor Day → structure, pro forma, guidance
+	•	May–June 2026: Expected ex-spin / SpinCo distribution
+	•	Example: CMCSA $33, SpinCo ~$6 → CMCSA opens ~$27 ex-spin + SpinCo shares delivered
+	•	Takeaway: Mechanical drop is normal; alpha comes from Parent re-rating.
+
+Buy Comcast (CMCSA) shares now
+Hold through Dec 4 Investor Day
+Target price: $38–42/share
+Stop loss: ~$29
+
+Rationale:
+- Strong Q3 free cash flow and segment performance
+- High-quality Parent assets
+- Olympics impacted media last year → current YoY comparisons are conservative
+- SOTP value unlock post-spin
+- Universal Parks growth
+- Optional upside from potential WBD bid
+
+
+
+
+
+
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
